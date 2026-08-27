@@ -17,6 +17,7 @@ use crate::process::ProcessManager;
 use crate::scanner::{canonical_project_path, command_for_action, scan_project};
 use crate::storage::Storage;
 use chrono::Utc;
+use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -125,6 +126,27 @@ fn refresh_project(project_id: String, state: tauri::State<'_, AppState>) -> Res
     project.disk_size_bytes = report.total_bytes;
     state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.refresh_project_metadata(&project)?;
     Ok(project)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteProjectRequest {
+    pub project_id: String,
+    pub delete_files: bool,
+}
+
+#[tauri::command(async)]
+fn delete_project(request: DeleteProjectRequest, app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&request.project_id)?;
+    let _ = state.processes.stop(&app, &state.storage, &request.project_id);
+    if request.delete_files {
+        let path = Path::new(&project.canonical_path);
+        if path.exists() {
+            std::fs::remove_dir_all(path).map_err(|e| format!("No se pudo borrar la carpeta del disco: {e}"))?;
+        }
+    }
+    state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.delete_project(&request.project_id)?;
+    Ok(())
 }
 
 #[tauri::command(async)]
@@ -547,7 +569,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            list_projects, register_project, unregister_project, get_project_detail, refresh_project, run_project, stop_project, restart_project,
+            list_projects, register_project, unregister_project, delete_project, get_project_detail, refresh_project, run_project, stop_project, restart_project,
             get_disk_report, preview_cleanup, clean_project, get_ide_settings, save_ide_settings, launch_project_tool,
             open_project_url, open_external_url, inspect_project_port,
             get_github_status, save_github_token, list_github_repos, clone_github_repo, safe_offload_project,

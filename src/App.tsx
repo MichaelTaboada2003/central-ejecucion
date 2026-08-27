@@ -124,6 +124,7 @@ export default function App() {
   const [loadingGithub, setLoadingGithub] = useState(false)
   const [offloadCandidate, setOffloadCandidate] = useState<Project | null>(null)
   const [cloneCandidate, setCloneCandidate] = useState<GitHubRepo | null>(null)
+  const [deleteCandidate, setDeleteCandidate] = useState<Project | null>(null)
   const [defaultCloneDir, setDefaultCloneDir] = useState<string>('')
   const searchRef = useRef<HTMLInputElement>(null)
   const selectedIdRef = useRef<string | null>(null)
@@ -467,6 +468,24 @@ export default function App() {
     })
   }
 
+  const handleDeleteProject = (candidate: Project, deleteFiles: boolean) => {
+    return action(`delete:${candidate.id}`, async () => {
+      await api.deleteProject(candidate.id, deleteFiles)
+      setDeleteCandidate(null)
+      if (selectedId === candidate.id) {
+        setSelectedId(null)
+      }
+      await loadProjects(true)
+      await loadGitHub()
+      setNotice({
+        kind: 'success',
+        text: deleteFiles
+          ? `Proyecto «${candidate.name}» y sus archivos locales eliminados.`
+          : `Proyecto «${candidate.name}» desregistrado del panel.`,
+      })
+    })
+  }
+
   const handleSaveGitHubToken = async (token: string) => {
     const status = await api.saveGitHubToken(token)
     setGithubStatus(status)
@@ -674,6 +693,7 @@ export default function App() {
               onLaunchTool={launchTool}
               onOpenUrl={() => action('url', () => api.openProjectUrl(detail.project.id))}
               onNotify={(text, kind) => setNotice({ kind, text })}
+              onDeleteProject={setDeleteCandidate}
             />
           ) : viewMode === 'github' ? (
             <GitHubHubView
@@ -704,6 +724,7 @@ export default function App() {
               onRegister={() => setModal('register')}
               onQuickRun={handleQuickRun}
               onQuickStop={handleQuickStop}
+              onDeleteProject={setDeleteCandidate}
               busy={busy}
             />
           )}
@@ -732,6 +753,15 @@ export default function App() {
           onClose={() => setOffloadCandidate(null)}
           onConfirm={performSafeOffload}
           busy={busy === `offload:${offloadCandidate.id}`}
+        />
+      )}
+
+      {deleteCandidate && (
+        <DeleteProjectModal
+          candidate={deleteCandidate}
+          onClose={() => setDeleteCandidate(null)}
+          onConfirm={handleDeleteProject}
+          busy={busy === `delete:${deleteCandidate.id}`}
         />
       )}
 
@@ -819,6 +849,7 @@ function ProjectWorkspace({
   onLaunchTool,
   onOpenUrl,
   onNotify,
+  onDeleteProject,
 }: {
   detail: ProjectDetail
   gitHubRepo?: GitHubRepo
@@ -841,6 +872,7 @@ function ProjectWorkspace({
   onLaunchTool: (tool: string) => void
   onOpenUrl: () => void
   onNotify: (text: string, kind: 'success' | 'error') => void
+  onDeleteProject: (project: Project) => void
 }) {
   const { project, scan, process, recentCommands } = detail
   const isRunning = project.status === 'running'
@@ -877,6 +909,15 @@ function ProjectWorkspace({
               <ArrowUpRight size={15} /> Abrir {project.localUrl}
             </button>
           )}
+          <button
+            className="secondary"
+            onClick={() => onDeleteProject(project)}
+            disabled={!!busy}
+            title="Eliminar o desregistrar proyecto"
+            style={{ color: 'var(--accent-rose, #ef4444)', borderColor: 'rgba(239, 68, 68, 0.3)' }}
+          >
+            <Trash2 size={15} /> Borrar
+          </button>
         </div>
       </div>
 
@@ -1082,6 +1123,7 @@ function Dashboard({
   onRegister,
   onQuickRun,
   onQuickStop,
+  onDeleteProject,
   busy,
 }: {
   projects: Project[]
@@ -1093,6 +1135,7 @@ function Dashboard({
   onRegister: () => void
   onQuickRun: (project: Project, e: React.MouseEvent) => void
   onQuickStop: (project: Project, e: React.MouseEvent) => void
+  onDeleteProject: (project: Project) => void
   busy: string | null
 }) {
   return (
@@ -1250,8 +1293,32 @@ function Dashboard({
 
                   <span>{formatBytes(project.diskSizeBytes)}</span>
 
-                  <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', opacity: 0.5 }}>
-                    <ChevronRight size={18} />
+                  <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}>
+                    <button
+                      className="icon-button"
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: 'var(--text-tertiary)',
+                        padding: '4px',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        transition: 'color 0.15s ease',
+                      }}
+                      title="Eliminar o desregistrar proyecto"
+                      onClick={e => {
+                        e.stopPropagation()
+                        onDeleteProject(project)
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.color = 'var(--accent-rose, #ef4444)')}
+                      onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-tertiary)')}
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                    <ChevronRight size={18} style={{ opacity: 0.5 }} />
                   </span>
                 </div>
               )
@@ -3161,6 +3228,105 @@ function SafeOffloadModal({
           >
             {busy ? <LoaderCircle className="spin" size={16} /> : <Trash2 size={16} />}
             {busy ? 'Verificando Git y Archivando…' : 'Verificar y Archivar'}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+function DeleteProjectModal({
+  candidate,
+  onClose,
+  onConfirm,
+  busy,
+}: {
+  candidate: Project
+  onClose: () => void
+  onConfirm: (candidate: Project, deleteFiles: boolean) => void
+  busy: boolean
+}) {
+  const [deleteFiles, setDeleteFiles] = useState(false)
+
+  return (
+    <Modal title="Eliminar Proyecto" onClose={onClose}>
+      <div className="cleanup-modal">
+        <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+          <div style={{ padding: 10, background: 'rgba(239, 68, 68, 0.12)', borderRadius: 10, color: 'var(--accent-rose, #ef4444)' }}>
+            <Trash2 size={26} />
+          </div>
+          <div>
+            <h3 style={{ margin: '0 0 6px', fontSize: '1.05rem' }}>¿Eliminar «{candidate.name}»?</h3>
+            <p style={{ margin: 0, fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+              Selecciona cómo deseas eliminar este proyecto de <strong>Dev Command Center</strong>:
+            </p>
+            <code style={{ display: 'block', marginTop: 8, padding: '6px 10px', background: 'var(--bg-canvas)', borderRadius: 6, fontSize: 12, wordBreak: 'break-all' }}>
+              {candidate.path}
+            </code>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div
+            className={`clone-choice-card ${!deleteFiles ? 'active' : ''}`}
+            onClick={() => setDeleteFiles(false)}
+            style={{ cursor: 'pointer' }}
+          >
+            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+              <input
+                type="radio"
+                name="deleteOption"
+                checked={!deleteFiles}
+                onChange={() => setDeleteFiles(false)}
+                style={{ marginTop: 3 }}
+              />
+              <div>
+                <strong style={{ fontSize: '0.9rem', color: 'var(--text-primary)', display: 'block' }}>
+                  Quitar del Command Center (Conservar archivos)
+                </strong>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.4, display: 'block', marginTop: 2 }}>
+                  Elimina el proyecto de la lista y del registro SQLite local, pero <strong>no borra ningún archivo</strong> de tu disco.
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div
+            className={`clone-choice-card ${deleteFiles ? 'active' : ''}`}
+            onClick={() => setDeleteFiles(true)}
+            style={{ cursor: 'pointer', borderColor: deleteFiles ? 'var(--accent-rose, #ef4444)' : undefined }}
+          >
+            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+              <input
+                type="radio"
+                name="deleteOption"
+                checked={deleteFiles}
+                onChange={() => setDeleteFiles(true)}
+                style={{ marginTop: 3 }}
+              />
+              <div>
+                <strong style={{ fontSize: '0.9rem', color: 'var(--accent-rose, #ef4444)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <AlertTriangle size={14} /> Eliminar del panel y borrar carpeta del disco
+                </strong>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.4, display: 'block', marginTop: 2 }}>
+                  Borra permanentemente la carpeta física en tu Mac. <strong style={{ color: 'var(--accent-rose)' }}>Esta acción es irreversible</strong>.
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="modal-actions" style={{ marginTop: 22 }}>
+          <button className="secondary" onClick={onClose} disabled={busy}>
+            Cancelar
+          </button>
+          <button
+            className="danger"
+            disabled={busy}
+            onClick={() => onConfirm(candidate, deleteFiles)}
+          >
+            {busy ? <LoaderCircle className="spin" size={16} /> : <Trash2 size={16} />}
+            {busy ? 'Eliminando…' : deleteFiles ? 'Borrar permanentemente' : 'Quitar del panel'}
           </button>
         </div>
       </div>

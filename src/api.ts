@@ -762,6 +762,14 @@ export const api = {
     return proj
   },
 
+  deleteProject: async (projectId: string, deleteFiles: boolean): Promise<void> => {
+    if (isTauri) return invoke<void>('delete_project', { request: { projectId, deleteFiles } })
+    const idx = memoryProjects.findIndex(p => p.id === projectId)
+    if (idx !== -1) memoryProjects.splice(idx, 1)
+  },
+
+
+
   runProject: async (request: RunProjectRequest): Promise<ProcessInfo> => {
     if (isTauri) return invoke<ProcessInfo>('run_project', { request })
     const proj = memoryProjects.find(p => p.id === request.projectId)
