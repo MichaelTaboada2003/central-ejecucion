@@ -194,8 +194,7 @@ export default function App() {
   useEffect(() => {
     const interval = setInterval(() => {
       void loadProjects(true)
-      if (selectedId) void loadDetail(selectedId)
-    }, 3500)
+    }, 6000)
     const onFocus = () => {
       void loadProjects(true)
       if (selectedId) void loadDetail(selectedId)

@@ -39,3 +39,16 @@ ureq = { version = "2.10", features = ["json", "tls"] }
 
 [dev-dependencies]
 tempfile = "3"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true

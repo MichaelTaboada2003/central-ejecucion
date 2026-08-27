@@ -316,11 +316,28 @@ impl DevCommandCenterMcp {
     fn dev_command_center_list_projects(&self) -> Result<String, String> {
         self.with_state(|state| {
             let mut projects = state.storage.list_projects()?;
+            let listening_ports = detect_all_listening_ports();
+            let mut cwd_cache: HashMap<u32, Option<String>> = HashMap::new();
+
             for project in &mut projects {
                 if state.processes.processes.contains_key(&project.id) {
                     project.status = ProjectStatus::Running;
-                } else if is_project_running(project).is_some() {
-                    project.status = ProjectStatus::Running;
+                    continue;
+                }
+                if let Some(port) = project.port {
+                    if let Some(listeners) = listening_ports.get(&port) {
+                        let canonical = Path::new(&project.canonical_path);
+                        for &(pid, _) in listeners {
+                            let cwd = cwd_cache.entry(pid).or_insert_with(|| get_process_cwd(pid));
+                            if let Some(cwd_str) = cwd {
+                                let cwd_path = Path::new(cwd_str);
+                                if cwd_path == canonical || cwd_path.starts_with(canonical) || canonical.starts_with(cwd_path) {
+                                    project.status = ProjectStatus::Running;
+                                    break;
+                                }
+                            }
+                        }
+                    }
                 }
             }
             as_json(projects)
@@ -646,6 +663,36 @@ fn command_available(program: &str, cwd: &Path) -> bool {
     }
     let paths = enhanced_path();
     std::env::split_paths(&paths).any(|directory| directory.join(program).is_file())
+}
+
+fn detect_all_listening_ports() -> HashMap<u16, Vec<(u32, String)>> {
+    let mut map: HashMap<u16, Vec<(u32, String)>> = HashMap::new();
+    let Ok(output) = Command::new("lsof").args(["-iTCP", "-sTCP:LISTEN", "-n", "-P", "-F", "pcn"]).output() else {
+        return map;
+    };
+    let Ok(stdout) = String::from_utf8(output.stdout) else {
+        return map;
+    };
+    
+    let mut current_pid: Option<u32> = None;
+    let mut current_cmd = String::new();
+
+    for line in stdout.lines() {
+        if let Some(pid_str) = line.strip_prefix('p') {
+            current_pid = pid_str.trim().parse::<u32>().ok();
+        } else if let Some(cmd) = line.strip_prefix('c') {
+            current_cmd = cmd.trim().to_string();
+        } else if let Some(name) = line.strip_prefix('n') {
+            if let Some(port_str) = name.rsplit(':').next() {
+                if let Ok(port) = port_str.trim().parse::<u16>() {
+                    if let Some(pid) = current_pid {
+                        map.entry(port).or_default().push((pid, current_cmd.clone()));
+                    }
+                }
+            }
+        }
+    }
+    map
 }
 
 fn is_project_running(project: &Project) -> Option<u32> {
