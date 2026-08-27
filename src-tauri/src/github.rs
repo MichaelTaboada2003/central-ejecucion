@@ -74,6 +74,41 @@ impl GitHubService {
         None
     }
 
+    pub fn scan_disk_repos(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<(String, Option<String>, String)>) {
+        if depth > max_depth {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(dir) else { return; };
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else { continue; };
+            if !file_type.is_dir() {
+                continue;
+            }
+            let file_name = entry.file_name();
+            let name_str = file_name.to_string_lossy();
+            if name_str.starts_with('.')
+                || matches!(
+                    name_str.as_ref(),
+                    "node_modules" | "target" | "dist" | "build" | ".venv" | "venv" | "__pycache__" | ".git" | ".Trash" | "Library"
+                )
+            {
+                continue;
+            }
+            let sub_path = entry.path();
+            if sub_path.join(".git").is_dir() {
+                let remote = Self::get_git_remote_url(&sub_path);
+                out.push((
+                    name_str.to_string(),
+                    remote,
+                    sub_path.to_string_lossy().to_string(),
+                ));
+            }
+            if depth < max_depth {
+                Self::scan_disk_repos(&sub_path, depth + 1, max_depth, out);
+            }
+        }
+    }
+
     pub fn get_account_status(token: Option<&str>) -> Result<GitHubAccountStatus, String> {
         let token = match token {
             Some(t) if !t.is_empty() => t,
@@ -137,6 +172,21 @@ impl GitHubService {
             .into_json()
             .map_err(|error| format!("Error al decodificar lista de repositorios: {error}"))?;
 
+        // Recursively discover all git repositories on disk across Programacion, Universidad, Zenoex
+        let mut discovered_disk_repos: Vec<(String, Option<String>, String)> = Vec::new();
+        if let Some(home) = dirs::home_dir() {
+            let roots = [
+                home.join("Desktop").join("Programacion"),
+                home.join("Desktop").join("Universidad"),
+                home.join("Desktop").join("Zenoex"),
+            ];
+            for root in &roots {
+                if root.is_dir() {
+                    Self::scan_disk_repos(root, 1, 4, &mut discovered_disk_repos);
+                }
+            }
+        }
+
         let mut repos = Vec::new();
         for item in body {
             let id = item.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -158,6 +208,7 @@ impl GitHubService {
             let mut local_project_id = None;
             let mut local_path = None;
 
+            // 1. First check registered local projects (SQLite)
             for proj in local_projects {
                 let proj_name_match = proj.name.eq_ignore_ascii_case(&name);
                 let folder_name_match = Path::new(&proj.canonical_path)
@@ -182,6 +233,32 @@ impl GitHubService {
                     local_project_id = Some(proj.id.clone());
                     local_path = Some(proj.canonical_path.clone());
                     break;
+                }
+            }
+
+            // 2. If not matched in registered projects, check all discovered disk repositories
+            if !is_cloned {
+                for (disk_folder, disk_remote, disk_path) in &discovered_disk_repos {
+                    let folder_name_match = disk_folder.eq_ignore_ascii_case(&name);
+                    let git_remote_match = disk_remote.as_ref()
+                        .map(|remote| {
+                            let r_lower = remote.to_lowercase();
+                            let fn_lower = full_name.to_lowercase();
+                            let n_lower = name.to_lowercase();
+                            r_lower.contains(&fn_lower)
+                                || r_lower.ends_with(&format!("/{}.git", n_lower))
+                                || r_lower.ends_with(&format!("/{}", n_lower))
+                        })
+                        .unwrap_or(false);
+
+                    if folder_name_match || git_remote_match {
+                        is_cloned = true;
+                        local_path = Some(disk_path.clone());
+                        if let Some(p) = local_projects.iter().find(|p| p.canonical_path == *disk_path) {
+                            local_project_id = Some(p.id.clone());
+                        }
+                        break;
+                    }
                 }
             }
 
