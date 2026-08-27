@@ -2561,6 +2561,9 @@ function GitHubHubView({
                   <div
                     className={`github-table-row ${repo.isCloned ? 'is-cloned' : ''}`}
                     key={repo.id}
+                    style={{ cursor: 'pointer' }}
+                    title={`Abrir «${repo.fullName}» en GitHub`}
+                    onClick={() => void api.openExternalUrl(repo.htmlUrl)}
                   >
                     <span className="project-cell">
                       <span className="mini-icon">
@@ -2568,16 +2571,13 @@ function GitHubHubView({
                       </span>
                       <span className="project-info">
                         <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <a
-                            href={repo.htmlUrl}
-                            target="_blank"
-                            rel="noreferrer"
+                          <span
                             className="github-title-link"
-                            title="Abrir en GitHub"
+                            title={`Abrir ${repo.fullName} en GitHub`}
                           >
                             <strong>{repo.name}</strong>
                             <ArrowUpRight size={13} style={{ opacity: 0.6 }} />
-                          </a>
+                          </span>
                         </span>
                         <small title={repo.description || repo.fullName}>
                           {repo.fullName} {repo.description ? `· ${repo.description}` : ''}
@@ -2636,14 +2636,20 @@ function GitHubHubView({
                         <>
                           <button
                             className="secondary"
-                            onClick={() => repo.localProjectId && onOpenLocal(repo.localProjectId)}
+                            onClick={e => {
+                              e.stopPropagation()
+                              if (repo.localProjectId) onOpenLocal(repo.localProjectId)
+                            }}
                             style={{ height: 28, fontSize: 11, padding: '0 10px', borderRadius: 4 }}
                           >
                             Abrir en Panel
                           </button>
                           <button
                             className="danger-outline"
-                            onClick={() => onSafeOffload(repo)}
+                            onClick={e => {
+                              e.stopPropagation()
+                              onSafeOffload(repo)
+                            }}
                             style={{ height: 28, fontSize: 11, padding: '0 10px', borderRadius: 4 }}
                             title="Liberar espacio en disco eliminando la copia local de forma segura"
                           >
@@ -2654,7 +2660,10 @@ function GitHubHubView({
                         <>
                           <button
                             className="primary"
-                            onClick={() => onClone(repo)}
+                            onClick={e => {
+                              e.stopPropagation()
+                              onClone(repo)
+                            }}
                             disabled={isCloning || !!busy}
                             style={{ height: 28, fontSize: 11, padding: '0 12px', borderRadius: 4 }}
                           >
@@ -2668,16 +2677,17 @@ function GitHubHubView({
                               </>
                             )}
                           </button>
-                          <a
-                            href={repo.htmlUrl}
-                            target="_blank"
-                            rel="noreferrer"
+                          <button
                             className="icon-btn"
-                            style={{ height: 28, width: 28, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4, opacity: 0.6, border: 'none', background: 'transparent', color: 'var(--text-secondary)' }}
-                            title="Ver en GitHub"
+                            style={{ height: 28, width: 28, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4, opacity: 0.7, border: 'none', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer' }}
+                            title={`Abrir ${repo.fullName} en GitHub`}
+                            onClick={e => {
+                              e.stopPropagation()
+                              void api.openExternalUrl(repo.htmlUrl)
+                            }}
                           >
                             <ArrowUpRight size={14} />
-                          </a>
+                          </button>
                         </>
                       )}
                     </span>
@@ -2690,19 +2700,22 @@ function GitHubHubView({
               {filteredRepos.map(repo => {
                 const isCloning = busy === `clone:${repo.name}`
                 return (
-                  <div className={`github-card ${repo.isCloned ? 'is-cloned' : ''}`} key={repo.id}>
+                  <div
+                    className={`github-card ${repo.isCloned ? 'is-cloned' : ''}`}
+                    key={repo.id}
+                    style={{ cursor: 'pointer' }}
+                    title={`Abrir «${repo.fullName}» en GitHub`}
+                    onClick={() => void api.openExternalUrl(repo.htmlUrl)}
+                  >
                     <div className="github-card-header">
                       <div className="github-repo-name">
-                        <a
-                          href={repo.htmlUrl}
-                          target="_blank"
-                          rel="noreferrer"
+                        <span
                           className="github-title-link"
                           title="Ver en GitHub"
                         >
                           <strong>{repo.name}</strong>
                           <ArrowUpRight size={14} />
-                        </a>
+                        </span>
                         <span className="github-full-name">{repo.fullName}</span>
                       </div>
                       <div className="github-badges">
@@ -2752,14 +2765,20 @@ function GitHubHubView({
                           <div style={{ display: 'flex', gap: 6 }}>
                             <button
                               className="secondary"
-                              onClick={() => repo.localProjectId && onOpenLocal(repo.localProjectId)}
+                              onClick={e => {
+                                e.stopPropagation()
+                                if (repo.localProjectId) onOpenLocal(repo.localProjectId)
+                              }}
                               style={{ height: 28, fontSize: 12, padding: '0 10px' }}
                             >
                               Abrir en Panel
                             </button>
                             <button
                               className="danger-outline"
-                              onClick={() => onSafeOffload(repo)}
+                              onClick={e => {
+                                e.stopPropagation()
+                                onSafeOffload(repo)
+                              }}
                               style={{ height: 28, fontSize: 12, padding: '0 10px' }}
                               title="Liberar espacio en disco eliminando la copia local de forma segura"
                             >
@@ -2775,7 +2794,10 @@ function GitHubHubView({
                           </div>
                           <button
                             className="primary"
-                            onClick={() => onClone(repo)}
+                            onClick={e => {
+                              e.stopPropagation()
+                              onClone(repo)
+                            }}
                             disabled={isCloning || !!busy}
                             style={{ height: 28, fontSize: 12, padding: '0 12px' }}
                           >

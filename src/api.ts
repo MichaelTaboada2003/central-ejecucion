@@ -850,6 +850,13 @@ export const api = {
     }
   },
 
+  openExternalUrl: async (url: string): Promise<void> => {
+    if (isTauri) return invoke<void>('open_external_url', { url })
+    if (typeof window !== 'undefined') {
+      window.open(url, '_blank', 'noopener,noreferrer')
+    }
+  },
+
   inspectPort: async (projectId: string): Promise<PortInfo | null> => {
     if (isTauri) return invoke<PortInfo | null>('inspect_project_port', { projectId })
     const proj = memoryProjects.find(p => p.id === projectId)

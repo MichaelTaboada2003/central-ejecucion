@@ -235,6 +235,11 @@ fn open_project_url(project_id: String, state: tauri::State<'_, AppState>) -> Re
 }
 
 #[tauri::command(async)]
+fn open_external_url(url: String) -> Result<(), String> {
+    ide::open_url(&url)
+}
+
+#[tauri::command(async)]
 fn inspect_project_port(project_id: String, state: tauri::State<'_, AppState>) -> Result<Option<PortInfo>, String> {
     let project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&project_id)?;
     let Some(port) = project.port else { return Ok(None); };
@@ -513,7 +518,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_projects, register_project, unregister_project, get_project_detail, refresh_project, run_project, stop_project, restart_project,
             get_disk_report, preview_cleanup, clean_project, get_ide_settings, save_ide_settings, launch_project_tool,
-            open_project_url, inspect_project_port,
+            open_project_url, open_external_url, inspect_project_port,
             get_github_status, save_github_token, list_github_repos, clone_github_repo, safe_offload_project
         ])
         .run(tauri::generate_context!())
