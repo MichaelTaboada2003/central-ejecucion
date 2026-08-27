@@ -1011,7 +1011,7 @@ function ProjectWorkspace({
                   ? 'Primero instala las dependencias para desbloquear este botón'
                   : !scan.devCommand
                   ? 'No hay comando de desarrollo detectado'
-                  : 'Iniciar Dev Server'
+                  : 'Run'
               }
               style={{
                 opacity: isMissingDeps ? 0.45 : 1,
@@ -1023,7 +1023,7 @@ function ProjectWorkspace({
               ) : (
                 <Play size={16} fill="currentColor" />
               )}
-              Iniciar Dev Server
+              Run
             </button>
           )}
         </div>
@@ -1080,15 +1080,11 @@ function ProjectWorkspace({
           <button
             className="primary"
             disabled={!!busy}
-            onClick={() => void onRun('install')}
+            onClick={() => setTab('dependencies')}
             style={{ whiteSpace: 'nowrap' }}
           >
-            {busy === 'run:install' ? (
-              <LoaderCircle size={15} className="spin" />
-            ) : (
-              <PackageOpen size={15} />
-            )}
-            Instalar
+            <PackageOpen size={15} />
+            Ver
           </button>
         </div>
       )}
