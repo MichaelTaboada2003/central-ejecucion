@@ -126,8 +126,25 @@ pub fn scan_project(path: &Path) -> Result<ProjectScan, String> {
     let requirements = path.join("requirements.txt");
     let poetry_lock = path.join("poetry.lock");
     let uv_lock = path.join("uv.lock");
-    if pyproject.is_file() || requirements.is_file() || path.join("manage.py").is_file() {
+    // Un proyecto Python puede no declarar ningún manifiesto (scripts sueltos,
+    // notebooks, trabajos de clase). Antes esos casos quedaban como «Desconocido»
+    // aunque tuvieran `__pycache__`, `.pytest_cache` o un entorno virtual dentro.
+    let python_manifests = [
+        "manage.py", "setup.py", "setup.cfg", "Pipfile", "environment.yml", "environment.yaml", ".python-version",
+    ];
+    let has_python_manifest = pyproject.is_file()
+        || requirements.is_file()
+        || python_manifests.iter().any(|name| path.join(name).is_file());
+    let has_python_environment = path.join("__pycache__").is_dir()
+        || path.join(".pytest_cache").is_dir()
+        || has_virtualenv(path);
+    if has_python_manifest || has_python_environment {
         if !types.contains(&"Python".to_string()) { types.push("Python".to_string()); }
+        for name in python_manifests {
+            if path.join(name).is_file() && !manifests.contains(&name.to_string()) {
+                manifests.push(name.to_string());
+            }
+        }
         if pyproject.is_file() {
             manifests.push("pyproject.toml".to_string());
             if let Ok(content) = fs::read_to_string(&pyproject) {
@@ -168,6 +185,9 @@ pub fn scan_project(path: &Path) -> Result<ProjectScan, String> {
         } else if poetry_lock.is_file() {
             if scan.package_manager.is_none() { scan.package_manager = Some("poetry".into()); }
             if lockfile.is_none() { lockfile = Some("poetry.lock".into()); }
+        } else if path.join("Pipfile.lock").is_file() || path.join("Pipfile").is_file() {
+            if scan.package_manager.is_none() { scan.package_manager = Some("pipenv".into()); }
+            if lockfile.is_none() && path.join("Pipfile.lock").is_file() { lockfile = Some("Pipfile.lock".into()); }
         } else if requirements.is_file() && scan.package_manager.is_none() {
             scan.package_manager = Some("pip".into());
         }
@@ -417,6 +437,13 @@ pub fn scan_project(path: &Path) -> Result<ProjectScan, String> {
         node_ok && python_ok && php_ok && rust_ok
     };
 
+    if types.is_empty() && has_loose_python_sources(path) {
+        types.push("Python".to_string());
+    }
+    if has_notebook(path) {
+        frameworks.insert("Jupyter".to_string());
+    }
+
     scan.project_type = if types.is_empty() { "Desconocido".into() } else { types.join(" + ") };
     scan.frameworks = frameworks.into_iter().collect();
     scan.manifests = manifests;
@@ -524,6 +551,42 @@ pub fn find_python_executable(path: &Path) -> String {
         return best_bin;
     }
     "python3".into()
+}
+
+/// Detecta un entorno virtual usable en la raíz del proyecto (`.venv`, `venv312`,
+/// `env`…), exigiendo que contenga un intérprete real y no sólo la carpeta.
+fn has_virtualenv(path: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(path) else { return false };
+    entries.flatten().any(|entry| {
+        if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            return false;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        (name.starts_with(".venv") || name.starts_with("venv") || name == "env")
+            && entry.path().join("bin/python").is_file()
+    })
+}
+
+/// Fuentes Python sueltas en la raíz (`.py` o notebooks) sin ningún manifiesto
+/// que las declare: talleres, análisis y trabajos de clase suelen ser así.
+fn has_loose_python_sources(path: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(path) else { return false };
+    entries.flatten().any(|entry| {
+        entry.file_type().is_ok_and(|kind| kind.is_file())
+            && entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "py" || extension == "ipynb")
+    })
+}
+
+/// Un cuaderno de Jupyter en la raíz del proyecto.
+fn has_notebook(path: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(path) else { return false };
+    entries.flatten().any(|entry| {
+        entry.file_type().is_ok_and(|kind| kind.is_file())
+            && entry.path().extension().is_some_and(|extension| extension == "ipynb")
+    })
 }
 
 fn python_script_to_spec(root: &Path, scan: &ProjectScan, script_name: &str) -> Result<CommandSpec, String> {
@@ -668,6 +731,7 @@ fn install_command(root: &Path, scan: &ProjectScan) -> Result<CommandSpec, Strin
         Some("bun") => Ok(spec("bun", &["install"])),
         Some("uv") => Ok(spec("uv", &["sync"])),
         Some("poetry") => Ok(spec("poetry", &["install"])),
+        Some("pipenv") => Ok(spec("pipenv", &["install", "--dev"])),
         // Instalar con el `python3` del sistema deja las dependencias fuera del
         // entorno virtual del proyecto (y en macOS falla por
         // «externally-managed-environment»): se usa el intérprete detectado.
@@ -964,6 +1028,43 @@ mod tests {
         assert_eq!(adapted.args, vec!["run", "dev", "--port", "8001"]);
         assert_eq!(adapted.env.get("PORT").map(String::as_str), Some("8001"));
         assert!(adapted.display.contains("8001"));
+    }
+
+    #[test]
+    fn detects_python_without_any_manifest() {
+        // Caso real: carpeta de scripts/notebooks con caché de ejecución pero sin
+        // pyproject.toml ni requirements.txt. Antes salía como «Desconocido».
+        let directory = tempdir().expect("tempdir");
+        fs::create_dir(directory.path().join("__pycache__")).expect("pycache");
+        fs::write(directory.path().join("scheduler.py"), "print('hola')").expect("source");
+        let scan = scan_project(directory.path()).expect("scan");
+        assert_eq!(scan.project_type, "Python");
+
+        // Sólo scripts sueltos, sin caché ni entorno: también cuenta.
+        let bare = tempdir().expect("tempdir");
+        fs::write(bare.path().join("analisis.py"), "print('hola')").expect("source");
+        assert_eq!(scan_project(bare.path()).expect("scan").project_type, "Python");
+
+        // Un taller de notebooks sin ningún .py también es Python, y se etiqueta.
+        let notebooks = tempdir().expect("tempdir");
+        fs::write(notebooks.path().join("notebook.ipynb"), "{}").expect("notebook");
+        let notebook_scan = scan_project(notebooks.path()).expect("scan");
+        assert_eq!(notebook_scan.project_type, "Python");
+        assert!(notebook_scan.frameworks.contains(&"Jupyter".to_string()));
+
+        // Sin ninguna señal de Python sigue siendo desconocido.
+        let empty = tempdir().expect("tempdir");
+        fs::write(empty.path().join("notas.txt"), "texto").expect("file");
+        assert_eq!(scan_project(empty.path()).expect("scan").project_type, "Desconocido");
+    }
+
+    #[test]
+    fn a_stray_python_script_does_not_relabel_a_node_project() {
+        let directory = tempdir().expect("tempdir");
+        fs::write(directory.path().join("package.json"), r#"{"scripts":{"dev":"vite"}}"#).expect("package");
+        fs::write(directory.path().join("build_assets.py"), "print('hola')").expect("script");
+        let scan = scan_project(directory.path()).expect("scan");
+        assert_eq!(scan.project_type, "Node.js");
     }
 
     #[test]

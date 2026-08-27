@@ -874,26 +874,25 @@ export const api = {
 
   getGitHubStatus: async (customToken?: string): Promise<GitHubAccountStatus> => {
     if (isTauri) return invoke<GitHubAccountStatus>('get_github_status', { customToken: customToken || null })
+    // La identidad de demo debe ser inconfundible: antes decía «Open Source
+    // Developer», que parecía una cuenta real y se confundía con la propia.
     return {
       authenticated: true,
-      username: 'developer',
-      name: 'Open Source Developer',
-      avatarUrl: 'https://avatars.githubusercontent.com/u/583231?v=4',
-      totalRepos: 12,
-      tokenPreview: 'github_pat_11A6...9HPk',
+      username: 'demo',
+      name: 'Cuenta de demostración (datos ficticios)',
+      avatarUrl: null,
+      totalRepos: 3,
+      tokenPreview: 'sin token real',
     }
   },
 
-  saveGitHubToken: async (token: string): Promise<GitHubAccountStatus> => {
-    if (isTauri) return invoke<GitHubAccountStatus>('save_github_token', { token })
-    return {
-      authenticated: true,
-      username: 'developer',
-      name: 'Open Source Developer',
-      avatarUrl: 'https://avatars.githubusercontent.com/u/583231?v=4',
-      totalRepos: 12,
-      tokenPreview: 'github_pat_11A6...9HPk',
-    }
+  saveGitHubToken: async (_token: string): Promise<GitHubAccountStatus> => {
+    if (isTauri) return invoke<GitHubAccountStatus>('save_github_token', { token: _token })
+    // Fingir que se guardó un token real descarta un secreto en silencio y deja
+    // creer que la app quedó vinculada. En modo demo hay que fallar de frente.
+    throw new Error(
+      'Modo demo: el token no se guarda ni se verifica porque no hay backend. Arranca la app con «pnpm tauri dev» para vincular tu cuenta de GitHub.'
+    )
   },
 
   listGitHubRepos: async (customToken?: string): Promise<GitHubRepo[]> => {
@@ -902,10 +901,10 @@ export const api = {
       {
         id: 1,
         name: 'web-dashboard',
-        fullName: 'developer/web-dashboard',
+        fullName: 'demo/web-dashboard',
         description: 'Modern developer dashboard workspace',
-        htmlUrl: 'https://github.com/developer/web-dashboard',
-        cloneUrl: 'https://github.com/developer/web-dashboard.git',
+        htmlUrl: 'https://github.com/demo/web-dashboard',
+        cloneUrl: 'https://github.com/demo/web-dashboard.git',
         isPrivate: false,
         language: 'TypeScript',
         stars: 128,
@@ -919,10 +918,10 @@ export const api = {
       {
         id: 2,
         name: 'api-service',
-        fullName: 'developer/api-service',
+        fullName: 'demo/api-service',
         description: 'High-performance microservices API',
-        htmlUrl: 'https://github.com/developer/api-service',
-        cloneUrl: 'https://github.com/developer/api-service.git',
+        htmlUrl: 'https://github.com/demo/api-service',
+        cloneUrl: 'https://github.com/demo/api-service.git',
         isPrivate: false,
         language: 'Python',
         stars: 45,
@@ -934,10 +933,10 @@ export const api = {
       {
         id: 3,
         name: 'core-engine',
-        fullName: 'developer/core-engine',
+        fullName: 'demo/core-engine',
         description: 'Native Rust processing engine',
-        htmlUrl: 'https://github.com/developer/core-engine',
-        cloneUrl: 'https://github.com/developer/core-engine.git',
+        htmlUrl: 'https://github.com/demo/core-engine',
+        cloneUrl: 'https://github.com/demo/core-engine.git',
         isPrivate: false,
         language: 'Rust',
         stars: 350,
