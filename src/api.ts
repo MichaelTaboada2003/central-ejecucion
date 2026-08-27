@@ -1000,10 +1000,24 @@ export const api = {
 
   pickFolder: async (options?: { title?: string; defaultPath?: string }): Promise<string | null> => {
     if (isTauri) {
-      return invoke<string | null>('pick_folder', {
-        title: options?.title || null,
-        defaultPath: options?.defaultPath || null,
-      })
+      try {
+        return await invoke<string | null>('pick_folder', {
+          title: options?.title || null,
+          defaultPath: options?.defaultPath || null,
+        })
+      } catch (err) {
+        console.warn('pick_folder invoke error:', err)
+      }
+    }
+    if (typeof window !== 'undefined' && 'showDirectoryPicker' in window) {
+      try {
+        const handle = await (window as any).showDirectoryPicker()
+        if (handle && handle.name) {
+          return `/Users/${handle.name}`
+        }
+      } catch {
+        return null
+      }
     }
     return null
   },

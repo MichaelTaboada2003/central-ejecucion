@@ -572,20 +572,22 @@ fn set_default_clone_dir(path: String, state: tauri::State<'_, AppState>) -> Res
 }
 
 #[tauri::command(async)]
-fn pick_folder(app: tauri::AppHandle, title: Option<String>, default_path: Option<String>) -> Result<Option<String>, String> {
-    use tauri_plugin_dialog::DialogExt;
-    let mut builder = app.dialog().file();
-    if let Some(t) = title {
-        builder = builder.set_title(t);
+async fn pick_folder(title: Option<String>, default_path: Option<String>) -> Result<Option<String>, String> {
+    let mut dialog = rfd::AsyncFileDialog::new();
+    if let Some(ref t) = title {
+        dialog = dialog.set_title(t);
     }
-    if let Some(p) = default_path {
+    if let Some(ref p) = default_path {
         let trimmed = p.trim();
         if !trimmed.is_empty() {
-            builder = builder.set_directory(PathBuf::from(trimmed));
+            let pb = PathBuf::from(trimmed);
+            if pb.exists() {
+                dialog = dialog.set_directory(pb);
+            }
         }
     }
-    let folder = builder.blocking_pick_folder();
-    Ok(folder.map(|p| p.to_string()))
+    let folder = dialog.pick_folder().await;
+    Ok(folder.map(|handle| handle.path().to_string_lossy().to_string()))
 }
 
 pub fn run() {
