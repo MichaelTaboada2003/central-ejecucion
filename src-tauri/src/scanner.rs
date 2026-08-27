@@ -49,6 +49,10 @@ pub fn scan_project(path: &Path) -> Result<ProjectScan, String> {
         frameworks.insert("Nx".to_string());
         frameworks.insert("Monorepo".to_string());
     }
+    if path.join("src-tauri").join("tauri.conf.json").is_file() || path.join("tauri.conf.json").is_file() {
+        manifests.push("tauri.conf.json".to_string());
+        frameworks.insert("Tauri".to_string());
+    }
     if path.join("render.yaml").is_file() {
         manifests.push("render.yaml".to_string());
     }
@@ -444,7 +448,7 @@ pub fn scan_project(path: &Path) -> Result<ProjectScan, String> {
         frameworks.insert("Jupyter".to_string());
     }
 
-    scan.project_type = if types.is_empty() { "Desconocido".into() } else { types.join(" + ") };
+    scan.project_type = describe_project_type(&types, &frameworks);
     scan.frameworks = frameworks.into_iter().collect();
     scan.manifests = manifests;
     scan.lockfile = lockfile;
@@ -551,6 +555,72 @@ pub fn find_python_executable(path: &Path) -> String {
         return best_bin;
     }
     "python3".into()
+}
+
+/// Etiqueta legible del proyecto. Antes se unían los lenguajes detectados con
+/// « + » («Node.js + Python + Rust»), que además de feo describía la fontanería
+/// en vez del proyecto. Se elige el marco más específico y, si no hay ninguno,
+/// se cae al lenguaje principal.
+fn describe_project_type(types: &[String], frameworks: &BTreeSet<String>) -> String {
+    if types.is_empty() {
+        return "Desconocido".into();
+    }
+    let has = |name: &str| frameworks.contains(name);
+
+    // Un repositorio con varios lenguajes y marcadores de workspace se describe
+    // por lo que es; el detalle vive en la lista de frameworks.
+    if has("Monorepo") && types.len() > 1 {
+        return "Monorepo".into();
+    }
+
+    // De lo más específico a lo más genérico.
+    let framework_label = if has("Tauri") {
+        Some("Tauri Desktop App")
+    } else if has("Expo") {
+        Some("Expo App")
+    } else if has("React Native") {
+        Some("React Native App")
+    } else if has("Next.js") {
+        Some("Next.js App")
+    } else if has("Nuxt") {
+        Some("Nuxt App")
+    } else if has("Astro") {
+        Some("Astro Site")
+    } else if has("SvelteKit") {
+        Some("SvelteKit App")
+    } else if has("Remix") {
+        Some("Remix App")
+    } else if has("Angular") {
+        Some("Angular App")
+    } else if has("NestJS") {
+        Some("NestJS Backend")
+    } else if has("Django") {
+        Some("Django App")
+    } else if has("Streamlit") {
+        Some("Streamlit App")
+    } else if has("FastAPI") {
+        Some("FastAPI Backend")
+    } else if has("Flask") {
+        Some("Flask Backend")
+    } else if has("Laravel") {
+        Some("Laravel App")
+    } else if has("Express") || has("Fastify") {
+        Some("Node.js Backend")
+    } else if has("Vite") {
+        Some("Vite App")
+    } else if has("Jupyter") {
+        Some("Jupyter Notebooks")
+    } else {
+        None
+    };
+    if let Some(label) = framework_label {
+        return label.to_string();
+    }
+
+    if has("Monorepo") {
+        return "Monorepo".into();
+    }
+    types.first().cloned().unwrap_or_else(|| "Desconocido".into())
 }
 
 /// Detecta un entorno virtual usable en la raíz del proyecto (`.venv`, `venv312`,
@@ -724,7 +794,17 @@ pub fn command_for_action_on_port(
 }
 
 fn install_command(root: &Path, scan: &ProjectScan) -> Result<CommandSpec, String> {
-    match scan.package_manager.as_deref() {
+    let effective_manager = scan.package_manager.as_deref().or_else(|| {
+        if root.join("package.json").is_file() {
+            Some("npm")
+        } else if root.join("requirements.txt").is_file() || root.join("pyproject.toml").is_file() {
+            Some("pip")
+        } else {
+            None
+        }
+    });
+
+    match effective_manager {
         Some("pnpm") => Ok(spec("pnpm", &["install"])),
         Some("npm") => Ok(spec("npm", &["install"])),
         Some("yarn") => Ok(spec("yarn", &["install"])),
@@ -1049,7 +1129,7 @@ mod tests {
         let notebooks = tempdir().expect("tempdir");
         fs::write(notebooks.path().join("notebook.ipynb"), "{}").expect("notebook");
         let notebook_scan = scan_project(notebooks.path()).expect("scan");
-        assert_eq!(notebook_scan.project_type, "Python");
+        assert_eq!(notebook_scan.project_type, "Jupyter Notebooks");
         assert!(notebook_scan.frameworks.contains(&"Jupyter".to_string()));
 
         // Sin ninguna señal de Python sigue siendo desconocido.
@@ -1065,6 +1145,28 @@ mod tests {
         fs::write(directory.path().join("build_assets.py"), "print('hola')").expect("script");
         let scan = scan_project(directory.path()).expect("scan");
         assert_eq!(scan.project_type, "Node.js");
+    }
+
+    #[test]
+    fn describes_the_project_with_one_label_instead_of_chaining_languages() {
+        let types = vec!["Node.js".to_string(), "Rust".to_string()];
+        let frameworks = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<BTreeSet<_>>();
+
+        // Nunca debe producirse una etiqueta encadenada con « + ».
+        let label = describe_project_type(&types, &frameworks(&["React", "Vite", "Tauri", "Rust"]));
+        assert_eq!(label, "Tauri Desktop App");
+        assert!(!label.contains('+'));
+
+        // Gana el marco más específico sobre el genérico.
+        assert_eq!(
+            describe_project_type(&["Node.js".to_string()], &frameworks(&["React", "Vite", "Next.js"])),
+            "Next.js App"
+        );
+        // Sin marco reconocible se cae al lenguaje principal, no a una lista.
+        assert_eq!(describe_project_type(&["Node.js".to_string()], &frameworks(&[])), "Node.js");
+        // Varios lenguajes con workspace declarado se describen como monorepo.
+        assert_eq!(describe_project_type(&types, &frameworks(&["Monorepo"])), "Monorepo");
+        assert_eq!(describe_project_type(&[], &frameworks(&[])), "Desconocido");
     }
 
     #[test]
@@ -1118,7 +1220,8 @@ mod tests {
         assert!(scan.frameworks.contains(&"pnpm Workspace".to_string()));
         assert!(scan.frameworks.contains(&"Nuxt".to_string()));
         assert!(scan.frameworks.contains(&"FastAPI".to_string()));
-        assert_eq!(scan.project_type, "Node.js + Python");
+        // Antes era «Node.js + Python»: la etiqueta ya no encadena lenguajes.
+        assert_eq!(scan.project_type, "Monorepo");
         assert_eq!(scan.declared_dependencies, 4);
         assert!(scan.dependencies.iter().any(|d| d.name == "nuxt" && d.source == "apps/web/package.json"));
         assert!(scan.dependencies.iter().any(|d| d.name == "fastapi" && d.source == "apps/server/pyproject.toml"));

@@ -381,6 +381,17 @@ export default function App() {
     })
   }
 
+  // Los metadatos sólo se recalculan al registrar o al pulsar «Actualizar» en un
+  // proyecto, así que al cambiar el detector quedaban etiquetas de versiones
+  // anteriores. Esto los reescribe todos de una pasada.
+  const handleRefreshAll = () =>
+    action('refresh-all', async () => {
+      const refreshed = await api.refreshAllProjects()
+      projectsSignature.current = JSON.stringify(refreshed)
+      setProjects(refreshed)
+      setNotice({ kind: 'success', text: `${refreshed.length} proyecto(s) reescaneados y sus metadatos actualizados.` })
+    })
+
   const handleRefresh = () =>
     detail &&
     action('refresh', async () => {
@@ -745,6 +756,7 @@ export default function App() {
             <Dashboard
               projects={visibleProjects}
               stats={stats}
+              onRefreshAll={handleRefreshAll}
               statusFilter={statusFilter}
               setStatusFilter={setStatusFilter}
               isGitHubConnected={isGitHubConnected}
@@ -1144,6 +1156,7 @@ function ProjectWorkspace({
 function Dashboard({
   projects,
   stats,
+  onRefreshAll,
   statusFilter,
   setStatusFilter,
   isGitHubConnected,
@@ -1156,6 +1169,7 @@ function Dashboard({
 }: {
   projects: Project[]
   stats: { total: number; running: number; stopped: number; error: number }
+  onRefreshAll: () => void
   statusFilter: ProjectStatus | 'all'
   setStatusFilter: (value: ProjectStatus | 'all') => void
   isGitHubConnected: (project: Project) => boolean
@@ -1174,9 +1188,19 @@ function Dashboard({
           <h1>Panel Local</h1>
           <p>Supervisa, ejecuta y optimiza tus entornos locales de desarrollo.</p>
         </div>
-        <button className="primary" onClick={onRegister}>
-          <Plus size={16} /> Registrar proyecto
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            className="secondary"
+            onClick={onRefreshAll}
+            disabled={!!busy}
+            title="Vuelve a analizar todos los proyectos y actualiza stack, frameworks y comandos"
+          >
+            <RefreshCw size={15} className={busy === 'refresh-all' ? 'spin' : ''} /> Reescanear todo
+          </button>
+          <button className="primary" onClick={onRegister}>
+            <Plus size={16} /> Registrar proyecto
+          </button>
+        </div>
       </div>
 
       <section className="stat-grid">
@@ -1663,7 +1687,8 @@ function DependenciesTab({
           <button
             className="primary"
             onClick={() => void onRun('install')}
-            disabled={!!busy || !scan.packageManager}
+            disabled={!!busy || (scan.declaredDependencies === 0 && !scan.packageManager && scan.manifests.length === 0)}
+            title={scan.installedDependencies ? 'Reinstalar o sincronizar dependencias' : 'Instalar dependencias del proyecto'}
           >
             {busy === 'run:install' ? (
               <LoaderCircle size={15} className="spin" />
