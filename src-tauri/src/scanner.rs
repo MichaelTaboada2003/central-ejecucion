@@ -109,7 +109,7 @@ pub fn scan_project(path: &Path) -> Result<ProjectScan, String> {
                 .cloned()
                 .collect::<Vec<_>>();
             add_node_frameworks(&dependency_names, &mut frameworks);
-            if scan.dev_command.is_none() { scan.dev_command = script_command(&scan.scripts, &["dev", "start"]); }
+            if scan.dev_command.is_none() { scan.dev_command = script_command(&scan.scripts, &["dev", "web", "start", "serve"]); }
             if scan.build_command.is_none() { scan.build_command = script_command(&scan.scripts, &["build"]); }
             if scan.test_command.is_none() { scan.test_command = script_command(&scan.scripts, &["test"]); }
             let scripts_text = package_json
@@ -579,7 +579,7 @@ pub fn command_for_action(root: &Path, scan: &ProjectScan, action: &str, request
         return install_command(scan);
     }
     let script = match action {
-        "dev" => ["dev", "start"].iter().find_map(|candidate| scan.scripts.iter().find(|script| script.name == *candidate)),
+        "dev" => ["dev", "web", "start", "serve"].iter().find_map(|candidate| scan.scripts.iter().find(|script| script.name == *candidate)),
         "build" | "test" | "lint" | "format" | "typecheck" => scan.scripts.iter().find(|script| script.name == action),
         "script" => requested_script.and_then(|name| scan.scripts.iter().find(|script| script.name == name)),
         _ => return Err("Acción no admitida. Solo se ejecutan scripts detectados o instalaciones del gestor detectado.".into()),
