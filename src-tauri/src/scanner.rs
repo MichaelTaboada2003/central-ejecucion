@@ -595,9 +595,34 @@ fn python_script_to_spec(root: &Path, scan: &ProjectScan, script_name: &str) -> 
     Ok(command_spec)
 }
 
+/// Puerto que realmente debe usar un servidor de desarrollo: el declarado, o el
+/// siguiente libre si el declarado ya está ocupado. Se resuelve una sola vez por
+/// arranque para que el comando lanzado y el puerto persistido no discrepen.
+pub fn resolve_dev_port(scan: &ProjectScan) -> Option<u16> {
+    let port = scan.port?;
+    if is_port_in_use(port) {
+        Some(find_next_available_port(port))
+    } else {
+        Some(port)
+    }
+}
+
 pub fn command_for_action(root: &Path, scan: &ProjectScan, action: &str, requested_script: Option<&str>) -> Result<CommandSpec, String> {
+    command_for_action_on_port(root, scan, action, requested_script, None)
+}
+
+/// Igual que `command_for_action`, pero con el puerto ya resuelto por quien
+/// llama. Evita que el puerto se calcule dos veces (una para el registro y otra
+/// para el comando) y termine aplicándose en ninguna de las dos.
+pub fn command_for_action_on_port(
+    root: &Path,
+    scan: &ProjectScan,
+    action: &str,
+    requested_script: Option<&str>,
+    desired_port: Option<u16>,
+) -> Result<CommandSpec, String> {
     if action == "install" {
-        return install_command(scan);
+        return install_command(root, scan);
     }
     let script = match action {
         "dev" => ["dev", "web", "start", "serve"].iter().find_map(|candidate| scan.scripts.iter().find(|script| script.name == *candidate)),
@@ -625,19 +650,17 @@ pub fn command_for_action(root: &Path, scan: &ProjectScan, action: &str, request
     };
 
     if action == "dev" {
-        if let Some(port) = scan.port {
-            if is_port_in_use(port) {
-                let next_port = find_next_available_port(port);
-                if next_port != port {
-                    return Ok(adapt_command_for_available_port(base_spec, next_port));
-                }
+        let target = desired_port.or_else(|| resolve_dev_port(scan));
+        if let Some(port) = target {
+            if Some(port) != scan.port {
+                return Ok(adapt_command_for_available_port(base_spec, port));
             }
         }
     }
     Ok(base_spec)
 }
 
-fn install_command(scan: &ProjectScan) -> Result<CommandSpec, String> {
+fn install_command(root: &Path, scan: &ProjectScan) -> Result<CommandSpec, String> {
     match scan.package_manager.as_deref() {
         Some("pnpm") => Ok(spec("pnpm", &["install"])),
         Some("npm") => Ok(spec("npm", &["install"])),
@@ -645,7 +668,10 @@ fn install_command(scan: &ProjectScan) -> Result<CommandSpec, String> {
         Some("bun") => Ok(spec("bun", &["install"])),
         Some("uv") => Ok(spec("uv", &["sync"])),
         Some("poetry") => Ok(spec("poetry", &["install"])),
-        Some("pip") => Ok(spec("python3", &["-m", "pip", "install", "-r", "requirements.txt"])),
+        // Instalar con el `python3` del sistema deja las dependencias fuera del
+        // entorno virtual del proyecto (y en macOS falla por
+        // «externally-managed-environment»): se usa el intérprete detectado.
+        Some("pip") => Ok(spec(&find_python_executable(root), &["-m", "pip", "install", "-r", "requirements.txt"])),
         _ => Err("No se detectó un gestor de dependencias con un comando de instalación seguro.".into()),
     }
 }
@@ -712,12 +738,23 @@ fn add_node_frameworks(dependencies: &[String], frameworks: &mut BTreeSet<String
         ("expo", "Expo"),
         ("react-native", "React Native"),
         ("remix", "Remix"),
+        ("@remix-run/react", "Remix"),
         ("@sveltejs/kit", "SvelteKit"),
     ] {
-        if dependencies.iter().any(|name| name == dependency || name.starts_with(&format!("{dependency}/")) || name.contains(dependency)) {
+        if dependencies.iter().any(|name| dependency_matches(name, dependency)) {
             frameworks.insert(framework.into());
         }
     }
+}
+
+/// Coincidencia por nombre exacto, sufijo de paquete (`expo-router`) o ámbito
+/// (`@nuxt/kit`). Una comparación por subcadena marcaba `vitest` como Vite y
+/// `preact` como React, y con ello el proyecto heredaba un puerto equivocado.
+fn dependency_matches(name: &str, dependency: &str) -> bool {
+    name == dependency
+        || name.starts_with(&format!("{dependency}-"))
+        || name.starts_with(&format!("{dependency}/"))
+        || name.starts_with(&format!("@{dependency}/"))
 }
 
 fn detect_port(input: &str) -> Option<u16> {
@@ -927,6 +964,37 @@ mod tests {
         assert_eq!(adapted.args, vec!["run", "dev", "--port", "8001"]);
         assert_eq!(adapted.env.get("PORT").map(String::as_str), Some("8001"));
         assert!(adapted.display.contains("8001"));
+    }
+
+    #[test]
+    fn does_not_confuse_lookalike_packages_with_frameworks() {
+        let mut frameworks = BTreeSet::new();
+        add_node_frameworks(&["vitest".into(), "preact".into()], &mut frameworks);
+        assert!(!frameworks.contains("Vite"));
+        assert!(!frameworks.contains("React"));
+
+        let mut real = BTreeSet::new();
+        add_node_frameworks(&["vite".into(), "react".into(), "expo-router".into(), "@nuxt/kit".into()], &mut real);
+        assert!(real.contains("Vite"));
+        assert!(real.contains("React"));
+        assert!(real.contains("Expo"));
+        assert!(real.contains("Nuxt"));
+    }
+
+    #[test]
+    fn applies_the_port_resolved_by_the_caller() {
+        let scan = ProjectScan {
+            package_manager: Some("pnpm".into()),
+            port: Some(5173),
+            scripts: vec![DetectedScript { name: "dev".into(), command: "pnpm run dev".into(), source: "package.json".into() }],
+            ..ProjectScan::default()
+        };
+        let shifted = command_for_action_on_port(Path::new("."), &scan, "dev", None, Some(5174)).expect("command");
+        assert_eq!(shifted.args, vec!["run", "dev", "--port", "5174"]);
+        assert_eq!(shifted.env.get("PORT").map(String::as_str), Some("5174"));
+
+        let untouched = command_for_action_on_port(Path::new("."), &scan, "dev", None, Some(5173)).expect("command");
+        assert_eq!(untouched.args, vec!["run", "dev"]);
     }
 
     #[test]

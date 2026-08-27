@@ -76,18 +76,20 @@ impl Storage {
         let rows = statement
             .query_map([], map_project)
             .map_err(|error| format!("No se pudo leer proyectos: {error}"))?;
-        let all_projects = rows.collect::<Result<Vec<_>, _>>()
+        let mut projects = rows.collect::<Result<Vec<_>, _>>()
             .map_err(|error| format!("No se pudo convertir proyectos: {error}"))?;
-        
-        let mut valid_projects = Vec::new();
-        for project in all_projects {
-            if Path::new(&project.canonical_path).is_dir() {
-                valid_projects.push(project);
-            } else {
-                let _ = self.delete_project(&project.id);
+
+        // Una carpeta ausente no implica que el proyecto deba desaparecer del
+        // registro: basta con un volumen externo desmontado para perder todos
+        // los proyectos que viven en él. Se marca el problema y se deja que el
+        // usuario decida borrarlo desde el detalle.
+        for project in &mut projects {
+            if !Path::new(&project.canonical_path).is_dir() {
+                project.status = ProjectStatus::Error;
+                project.last_error = Some("La carpeta registrada no está disponible en el disco.".into());
             }
         }
-        Ok(valid_projects)
+        Ok(projects)
     }
 
     pub fn delete_project(&self, id: &str) -> Result<(), String> {
@@ -248,7 +250,12 @@ pub fn default_ide_configs() -> Vec<IdeConfig> {
 pub fn command_available(command: &str) -> bool {
     let candidate = Path::new(command);
     if candidate.components().count() > 1 { return candidate.is_file(); }
-    std::env::var_os("PATH").is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(command).is_file()))
+    // Una app lanzada desde Finder hereda un `PATH` mínimo (`/usr/bin:/bin:…`),
+    // así que las herramientas instaladas en Homebrew o `~/.local/bin` se
+    // reportaban siempre como «No detectado». Se usa el mismo `PATH` ampliado
+    // con el que después se lanzan los procesos.
+    let paths = crate::process::enhanced_path();
+    std::env::split_paths(&paths).any(|dir| dir.join(command).is_file())
 }
 
 pub fn validate_ide_command(command: &str) -> Result<(), String> {

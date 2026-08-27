@@ -252,27 +252,28 @@ impl DevCommandCenterMcp {
         if state.processes.processes.contains_key(&request.project_id) {
             return Err("Este puente MCP ya administra un proceso para el proyecto solicitado.".into());
         }
-        let (mut project, _, mut scan) = Self::project_and_scan(state, &request.project_id)?;
+        let (mut project, _, scan) = Self::project_and_scan(state, &request.project_id)?;
         if project.status == ProjectStatus::Running {
             return Err("El proyecto figura en ejecución. Para evitar interferir con un proceso de la UI u otro agente, este MCP no iniciará un segundo proceso.".into());
         }
         if !scan.installed_dependencies && scan.declared_dependencies > 0 {
             return Err("Primero debes instalar las dependencias del proyecto antes de iniciar el servidor de desarrollo.".into());
         }
+        // El puerto se resuelve una vez y se pasa al constructor del comando: al
+        // sobrescribir `scan.port` antes de construirlo, la comprobación interna
+        // ya veía el puerto libre y nunca añadía el `--port` correspondiente.
+        let mut desired_port = None;
         if let Some(port) = scan.port {
-            if scanner::is_port_in_use(port) {
-                let next_port = scanner::find_next_available_port(port);
-                if next_port != port {
-                    scan.port = Some(next_port);
-                    scan.local_url = Some(format!("http://localhost:{next_port}"));
-                    project.port = Some(next_port);
-                    project.local_url = Some(format!("http://localhost:{next_port}"));
-                    let _ = state.storage.refresh_project_metadata(&project);
-                }
+            let resolved = scanner::resolve_dev_port(&scan).unwrap_or(port);
+            if resolved != port {
+                desired_port = Some(resolved);
+                project.port = Some(resolved);
+                project.local_url = Some(format!("http://localhost:{resolved}"));
+                let _ = state.storage.refresh_project_metadata(&project);
             }
         }
         let root = std::path::Path::new(&project.canonical_path);
-        let spec = command_for_action(root, &scan, "dev", None)?;
+        let spec = scanner::command_for_action_on_port(root, &scan, "dev", None, desired_port)?;
         if !command_available(&spec.program, root) {
             return Err(format!("No se encontró «{}» en PATH ni en el proyecto.", spec.program));
         }

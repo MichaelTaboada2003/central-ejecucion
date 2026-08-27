@@ -139,7 +139,14 @@ impl GitHubService {
                     }
                 }
             }
-            if let Some((best_parent, _)) = parent_counts.into_iter().max_by_key(|(_, count)| *count) {
+            // `max_by_key` sobre un HashMap resolvía los empates según el orden de
+            // iteración, que varía entre ejecuciones: la ruta propuesta cambiaba
+            // sola. Se desempata por ruta para que sea estable.
+            let mut ranked = parent_counts.into_iter().collect::<Vec<_>>();
+            ranked.sort_by(|(left_path, left_count), (right_path, right_count)| {
+                right_count.cmp(left_count).then_with(|| left_path.cmp(right_path))
+            });
+            if let Some((best_parent, _)) = ranked.into_iter().next() {
                 return Ok(best_parent.join(repo_name));
             }
         }
@@ -236,8 +243,13 @@ impl GitHubService {
         let total_repos = body.get("public_repos").and_then(|v| v.as_u64()).unwrap_or(0) as usize
             + body.get("total_private_repos").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
 
-        let token_preview = if token.len() > 8 {
-            Some(format!("{}...{}", &token[..4], &token[token.len() - 4..]))
+        // Cortar por índices de bytes puede caer a mitad de un carácter y provocar
+        // un pánico: la vista previa se construye sobre caracteres.
+        let characters = token.chars().collect::<Vec<_>>();
+        let token_preview = if characters.len() > 8 {
+            let head = characters[..4].iter().collect::<String>();
+            let tail = characters[characters.len() - 4..].iter().collect::<String>();
+            Some(format!("{head}...{tail}"))
         } else {
             None
         };
@@ -258,15 +270,29 @@ impl GitHubService {
             _ => return Err("No se ha configurado un Token de GitHub.".into()),
         };
 
-        let response = ureq::get("https://api.github.com/user/repos?visibility=all&affiliation=owner,collaborator,organization_member&per_page=100&sort=updated")
-            .set("Authorization", &format!("Bearer {token}"))
-            .set("User-Agent", "DevCommandCenter/1.0")
-            .call()
-            .map_err(|error| format!("Error al consultar repositorios de GitHub: {error}"))?;
-
-        let body: Vec<Value> = response
-            .into_json()
-            .map_err(|error| format!("Error al decodificar lista de repositorios: {error}"))?;
+        // La API pagina de 100 en 100: pedir una sola página truncaba en silencio
+        // el catálogo de cuentas con más de 100 repositorios.
+        const PER_PAGE: usize = 100;
+        const MAX_PAGES: usize = 20;
+        let mut body: Vec<Value> = Vec::new();
+        for page in 1..=MAX_PAGES {
+            let url = format!(
+                "https://api.github.com/user/repos?visibility=all&affiliation=owner,collaborator,organization_member&per_page={PER_PAGE}&sort=updated&page={page}"
+            );
+            let response = ureq::get(&url)
+                .set("Authorization", &format!("Bearer {token}"))
+                .set("User-Agent", "DevCommandCenter/1.0")
+                .call()
+                .map_err(|error| format!("Error al consultar repositorios de GitHub: {error}"))?;
+            let chunk: Vec<Value> = response
+                .into_json()
+                .map_err(|error| format!("Error al decodificar lista de repositorios: {error}"))?;
+            let received = chunk.len();
+            body.extend(chunk);
+            if received < PER_PAGE {
+                break;
+            }
+        }
 
         // Recursively discover all git repositories across dynamic workspace roots
         let search_roots = Self::get_workspace_search_roots(local_projects);
@@ -420,6 +446,19 @@ impl GitHubService {
             return Err(format!("Falló la clonación del repositorio: {stderr}"));
         }
 
+        // `git clone` guarda la URL usada en `.git/config`, así que clonar con el
+        // token incrustado lo dejaba escrito en claro dentro del proyecto. Se
+        // restaura el remoto limpio en cuanto termina la clonación.
+        if effective_clone_url != clone_url {
+            let _ = Command::new("git")
+                .arg("remote")
+                .arg("set-url")
+                .arg("origin")
+                .arg(clone_url)
+                .current_dir(&destination)
+                .output();
+        }
+
         let canonical = destination
             .canonicalize()
             .map_err(|error| format!("No se pudo resolver la ruta canónica del proyecto clonado: {error}"))?;
@@ -483,18 +522,25 @@ impl GitHubService {
                 .arg("@{u}..HEAD")
                 .arg("--oneline")
                 .current_dir(project_path)
-                .output();
+                .output()
+                .map_err(|error| format!("No se pudo verificar los commits pendientes: {error}"))?;
 
-            if let Ok(out) = log_output {
-                if out.status.success() {
-                    let log_text = String::from_utf8_lossy(&out.stdout);
-                    if !log_text.trim().is_empty() {
-                        return Err(format!(
-                            "Operación cancelada: Hay commits locales pendientes de subir a GitHub (git push):\n\n{}",
-                            log_text.lines().take(3).collect::<Vec<_>>().join("\n")
-                        ));
-                    }
+            if log_output.status.success() {
+                let log_text = String::from_utf8_lossy(&log_output.stdout);
+                if !log_text.trim().is_empty() {
+                    return Err(format!(
+                        "Operación cancelada: Hay commits locales pendientes de subir a GitHub (git push):\n\n{}",
+                        log_text.lines().take(3).collect::<Vec<_>>().join("\n")
+                    ));
                 }
+            } else {
+                // Sin rama de seguimiento no hay forma de comprobar que el trabajo
+                // esté en GitHub. Antes se ignoraba el fallo y se borraba la
+                // carpeta igualmente, perdiendo repositorios nunca publicados.
+                return Err(
+                    "Operación cancelada: la rama actual no tiene rama de seguimiento en GitHub, así que no se puede comprobar que tu trabajo esté publicado. Haz «git push -u origin <rama>» o marca la casilla de forzado si aun así deseas borrar la copia local."
+                        .to_string(),
+                );
             }
         }
 

@@ -34,13 +34,20 @@ pub fn clean_targets(root: &Path, requested_targets: &[String]) -> Result<(Vec<S
         return Err("Selecciona al menos un directorio regenerable para limpiar.".into());
     }
     let entries = cleanable_entries(root)?;
+    // Se comparan conjuntos, no longitudes: un destino repetido en la petición
+    // hacía fallar la limpieza como si fuera un destino desconocido.
+    let mut requested: Vec<&String> = requested_targets.iter().collect();
+    requested.sort();
+    requested.dedup();
+    if let Some(unknown) = requested.iter().find(|target| !entries.iter().any(|entry| entry.target == ***target)) {
+        return Err(format!(
+            "La solicitud contiene un destino que no pertenece a la vista previa segura del proyecto: {unknown}"
+        ));
+    }
     let selected = entries
         .iter()
-        .filter(|entry| requested_targets.contains(&entry.target))
+        .filter(|entry| requested.iter().any(|target| **target == entry.target))
         .collect::<Vec<_>>();
-    if selected.len() != requested_targets.len() {
-        return Err("La solicitud contiene un destino que no pertenece a la vista previa segura del proyecto.".into());
-    }
 
     let mut deleted = Vec::new();
     let mut released = 0_u64;
@@ -142,7 +149,10 @@ mod tests {
         let preview = cleanup_preview("project", directory.path()).expect("preview");
         assert_eq!(preview.entries.len(), 1);
         assert!(clean_targets(directory.path(), &[".env".into()]).is_err());
-        clean_targets(directory.path(), &["node_modules".into()]).expect("clean node modules");
+        assert!(clean_targets(directory.path(), &["node_modules".into(), "dist".into()]).is_err());
+        // Un destino repetido sigue siendo un único borrado válido.
+        clean_targets(directory.path(), &["node_modules".into(), "node_modules".into()]).expect("clean node modules");
         assert!(directory.path().join(".env").exists());
+        assert!(!directory.path().join("node_modules").exists());
     }
 }

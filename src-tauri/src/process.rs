@@ -4,6 +4,8 @@ use chrono::Utc;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
@@ -22,6 +24,8 @@ pub const STATUS_EVENT: &str = "project://status";
 const LOG_FLUSH_INTERVAL: Duration = Duration::from_millis(120);
 /// Tamaño a partir del cual se emite el lote sin esperar al temporizador.
 const LOG_BATCH_SIZE: usize = 200;
+/// Gracia concedida al grupo de procesos tras `SIGTERM` antes de forzar el cierre.
+const STOP_GRACE_PERIOD: Duration = Duration::from_millis(2_500);
 
 #[derive(Clone, Default)]
 pub struct ProcessManager {
@@ -56,14 +60,22 @@ impl ProcessManager {
             id: command_record_id.clone(), project_id: project.id.clone(), action, command: spec.display.clone(), started_at: started_at.clone(), ended_at: None, exit_code: None, status: "running".into(), error_message: None,
         };
         storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.command_started(&record)?;
-        let mut child = Command::new(&spec.program)
+        let mut command = Command::new(&spec.program);
+        command
             .args(&spec.args)
             .envs(&spec.env)
             .env("PATH", enhanced_path())
             .current_dir(&project.canonical_path)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+        // El hijo lidera su propio grupo de procesos. Un `npm run dev` lanza a su
+        // vez el servidor real: matar solo al hijo directo dejaba al nieto vivo
+        // reteniendo el puerto. Con un grupo propio se puede terminar el árbol
+        // completo sin tocar procesos ajenos al panel.
+        #[cfg(unix)]
+        command.process_group(0);
+        let mut child = command
             .spawn()
             .map_err(|error| {
                 let message = format!("No se pudo iniciar «{}»: {error}", spec.display);
@@ -93,7 +105,17 @@ impl ProcessManager {
         let mut managed = self.processes.lock().map_err(|_| "El administrador de procesos está ocupado.".to_string())?
             .remove(project_id)
             .ok_or_else(|| "No hay un proceso administrado activo para este proyecto. No se terminarán procesos externos.".to_string())?;
-        let _ = managed.child.kill();
+        let group = managed.child.id();
+        // `SIGTERM` va al grupo completo, no solo al hijo directo: un `npm run dev`
+        // delega el servidor real a un nieto que es quien retiene el puerto. Los
+        // servidores de desarrollo habituales cierran su socket ante `SIGTERM`.
+        signal_group(group, "TERM");
+        if !wait_for_exit(&mut managed.child, STOP_GRACE_PERIOD) {
+            // El líder sigue vivo, así que el grupo sigue siendo nuestro y se puede
+            // forzar sin riesgo de que el identificador se haya reciclado.
+            signal_group(group, "KILL");
+            let _ = managed.child.kill();
+        }
         let status = managed.child.wait().map_err(|error| format!("No se pudo esperar el proceso terminado: {error}"))?;
         Ok((managed, status))
     }
@@ -198,6 +220,39 @@ pub fn enhanced_path() -> String {
     current_paths.join(":")
 }
 
+/// Envía una señal a todo el grupo del proceso administrado. Solo alcanza a los
+/// procesos que el panel lanzó, porque el hijo se creó como líder de su grupo.
+#[cfg(unix)]
+fn signal_group(group: u32, signal: &str) {
+    let _ = Command::new("/bin/kill")
+        .arg(format!("-{signal}"))
+        .arg("--")
+        .arg(format!("-{group}"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+#[cfg(not(unix))]
+fn signal_group(_group: u32, _signal: &str) {}
+
+/// Espera a que el hijo termine dentro del plazo. Devuelve `true` si terminó.
+fn wait_for_exit(child: &mut Child, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return true,
+            Ok(None) => {}
+            Err(_) => return false,
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
 fn command_available(program: &str, cwd: &Path) -> bool {
     let candidate = std::path::Path::new(program);
     if candidate.is_file() || cwd.join(candidate).is_file() {
@@ -214,19 +269,63 @@ fn command_available(program: &str, cwd: &Path) -> bool {
 mod tests {
     use super::*;
 
+    fn register_fixture(manager: &ProcessManager, id: &str, child: Child) {
+        let pid = child.id();
+        manager.processes.lock().expect("registry").insert(id.into(), ManagedProcess {
+            child,
+            info: ProcessInfo { project_id: id.into(), pid, started_at: "now".into(), command: "fixture".into() },
+            command_record_id: format!("record-{id}"),
+        });
+    }
+
+    fn is_alive(pid: u32) -> bool {
+        Command::new("/bin/kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+
     #[test]
     fn stops_only_a_child_owned_by_the_manager() {
         let manager = ProcessManager::default();
-        let child = Command::new("/bin/sleep").arg("30").spawn().expect("start fixture child");
-        let pid = child.id();
-        manager.processes.lock().expect("registry").insert("project-a".into(), ManagedProcess {
-            child,
-            info: ProcessInfo { project_id: "project-a".into(), pid, started_at: "now".into(), command: "/bin/sleep 30".into() },
-            command_record_id: "record-a".into(),
-        });
+        let mut command = Command::new("/bin/sleep");
+        command.arg("30");
+        #[cfg(unix)]
+        command.process_group(0);
+        register_fixture(&manager, "project-a", command.spawn().expect("start fixture child"));
         let (_, status) = manager.stop_managed("project-a").expect("stop owned child");
         assert!(!status.success());
         assert!(manager.get("project-a").is_none());
         assert!(manager.stop_managed("external-project").is_err());
+    }
+
+    /// El caso real: `npm run dev` delega el servidor a un nieto. Terminar solo al
+    /// hijo directo dejaba ese nieto vivo reteniendo el puerto del proyecto.
+    #[cfg(unix)]
+    #[test]
+    fn stops_the_whole_process_tree_not_just_the_direct_child() {
+        let manager = ProcessManager::default();
+        let mut command = Command::new("/bin/sh");
+        command
+            .arg("-c")
+            .arg("/bin/sleep 30 & echo $!; wait")
+            .stdout(Stdio::piped())
+            .process_group(0);
+        let mut child = command.spawn().expect("start fixture shell");
+        let mut reader = BufReader::new(child.stdout.take().expect("stdout"));
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("grandchild pid");
+        let grandchild: u32 = line.trim().parse().expect("parse grandchild pid");
+        assert!(is_alive(grandchild), "el nieto debería estar vivo antes de detener");
+
+        register_fixture(&manager, "project-tree", child);
+        manager.stop_managed("project-tree").expect("stop process tree");
+
+        // El nieto recibió la señal a través del grupo, no solo el hijo directo.
+        assert!(!is_alive(grandchild), "el nieto siguió vivo tras detener el proyecto");
     }
 }
