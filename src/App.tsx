@@ -535,7 +535,6 @@ export default function App() {
         <section className="project-nav">
           <div className="nav-heading">
             <span>PROYECTOS</span>
-            <span>{projects.length}</span>
           </div>
           <div className="project-list">
             {projects.map(project => {
