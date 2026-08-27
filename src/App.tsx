@@ -1,4 +1,3 @@
-import { open } from '@tauri-apps/plugin-dialog'
 import { listen } from '@tauri-apps/api/event'
 import {
   AlertOctagon, AlertTriangle, AppWindow, ArrowLeft, ArrowUpRight, Bot, Box, Check,
@@ -2032,19 +2031,13 @@ function RegisterModal({
   const [tags, setTags] = useState('')
 
   const chooseFolder = async () => {
-    if (isTauri) {
-      try {
-        const result = await open({
-          directory: true,
-          multiple: false,
-          title: 'Selecciona la carpeta del proyecto',
-        })
-        if (typeof result === 'string') setPath(result)
-      } catch (err) {
-        console.warn('Dialog error in Tauri:', err)
-      }
-    } else {
-      setPath('')
+    try {
+      const result = await api.pickFolder({
+        title: 'Selecciona la carpeta del proyecto',
+      })
+      if (result) setPath(result)
+    } catch (err) {
+      console.warn('Dialog error in Tauri:', err)
     }
   }
 
@@ -2134,21 +2127,18 @@ function CloneModal({
   const [setAsDefault, setSetAsDefault] = useState(false)
 
   const handleBrowseCustom = async () => {
-    if (isTauri) {
-      try {
-        const result = await open({
-          directory: true,
-          multiple: false,
-          title: `Selecciona carpeta destino para «${repo.name}»`,
-        })
-        if (typeof result === 'string') {
-          const finalPath = `${result.replace(/\/+$/, '')}/${repo.name}`
-          setCustomPath(finalPath)
-          setDestinationMode('custom')
-        }
-      } catch (err) {
-        console.warn('Dialog error:', err)
+    try {
+      const result = await api.pickFolder({
+        title: `Selecciona carpeta destino para «${repo.name}»`,
+        defaultPath: defaultBase,
+      })
+      if (result) {
+        const finalPath = `${result.replace(/\/+$/, '')}/${repo.name}`
+        setCustomPath(finalPath)
+        setDestinationMode('custom')
       }
+    } catch (err) {
+      console.warn('Dialog error:', err)
     }
   }
 
@@ -2332,19 +2322,16 @@ function SettingsModal({
   }
 
   const handleCloneDirBrowse = async () => {
-    if (isTauri) {
-      try {
-        const result = await open({
-          directory: true,
-          multiple: false,
-          title: 'Selecciona la carpeta base para clonar repositorios',
-        })
-        if (typeof result === 'string') {
-          setCloneDirInput(result)
-        }
-      } catch (err) {
-        console.warn('Dialog error:', err)
+    try {
+      const result = await api.pickFolder({
+        title: 'Selecciona la carpeta base para clonar repositorios',
+        defaultPath: cloneDirInput || defaultCloneDir,
+      })
+      if (result) {
+        setCloneDirInput(result)
       }
+    } catch (err) {
+      console.warn('Dialog error:', err)
     }
   }
 

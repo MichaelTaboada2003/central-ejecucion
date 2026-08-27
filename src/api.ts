@@ -997,4 +997,14 @@ export const api = {
     if (isTauri) return invoke<string>('set_default_clone_dir', { path })
     return path
   },
+
+  pickFolder: async (options?: { title?: string; defaultPath?: string }): Promise<string | null> => {
+    if (isTauri) {
+      return invoke<string | null>('pick_folder', {
+        title: options?.title || null,
+        defaultPath: options?.defaultPath || null,
+      })
+    }
+    return null
+  },
 }

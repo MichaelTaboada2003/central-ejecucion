@@ -4,7 +4,7 @@ pub mod github;
 pub mod ide;
 #[cfg(feature = "mcp")]
 pub mod mcp;
-mod process;
+pub mod process;
 pub mod scanner;
 pub mod storage;
 
@@ -14,7 +14,7 @@ use crate::domain::{
     RegisterProjectRequest, RunProjectRequest, SafeOffloadResult,
 };
 use crate::process::ProcessManager;
-use crate::scanner::{canonical_project_path, command_for_action, scan_project};
+use crate::scanner::{canonical_project_path, scan_project};
 use crate::storage::Storage;
 use chrono::Utc;
 use serde::Deserialize;
@@ -159,27 +159,30 @@ fn unregister_project(project_id: String, state: tauri::State<'_, AppState>) -> 
 fn run_project(request: RunProjectRequest, app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<ProcessInfo, String> {
     let mut project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&request.project_id)?;
     let root = trusted_project_root(&project)?;
-    let mut scan = scan_project(&root)?;
+    let scan = scan_project(&root)?;
 
+    // El puerto se resuelve una sola vez y se pasa explícitamente al constructor
+    // del comando. Antes se sobrescribía `scan.port` con el puerto libre antes de
+    // construir el comando, de modo que la comprobación interna ya lo veía libre
+    // y nunca añadía el `--port`: el servidor arrancaba en el puerto ocupado
+    // mientras el registro guardaba el nuevo.
+    let mut desired_port = None;
     if request.action == "dev" {
         if !scan.installed_dependencies && scan.declared_dependencies > 0 {
             return Err("Primero debes instalar las dependencias del proyecto antes de iniciar el servidor de desarrollo.".into());
         }
         if let Some(port) = scan.port {
-            if scanner::is_port_in_use(port) {
-                let next_port = scanner::find_next_available_port(port);
-                if next_port != port {
-                    scan.port = Some(next_port);
-                    scan.local_url = Some(format!("http://localhost:{next_port}"));
-                    project.port = Some(next_port);
-                    project.local_url = Some(format!("http://localhost:{next_port}"));
-                    let _ = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.refresh_project_metadata(&project);
-                }
+            let resolved = scanner::resolve_dev_port(&scan).unwrap_or(port);
+            if resolved != port {
+                desired_port = Some(resolved);
+                project.port = Some(resolved);
+                project.local_url = Some(format!("http://localhost:{resolved}"));
+                let _ = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.refresh_project_metadata(&project);
             }
         }
     }
 
-    let spec = command_for_action(&root, &scan, &request.action, request.script.as_deref())?;
+    let spec = scanner::command_for_action_on_port(&root, &scan, &request.action, request.script.as_deref(), desired_port)?;
     match state.processes.start(app, state.storage.clone(), project.clone(), request.action, spec) {
         Ok(process) => {
             invalidate_probe_cache();
@@ -410,6 +413,13 @@ pub fn update_projects_status_batch(
             project.status = ProjectStatus::Running;
             continue;
         }
+        // El estado «en ejecución» guardado en SQLite sobrevive a un cierre
+        // abrupto de la app o del servidor. Si aquí no hay proceso administrado,
+        // se parte de «detenido» y solo se vuelve a marcar en ejecución cuando el
+        // sondeo de puertos confirma un servidor propio del proyecto.
+        if matches!(project.status, ProjectStatus::Running | ProjectStatus::Starting) {
+            project.status = ProjectStatus::Stopped;
+        }
         if project.port.is_some() {
             pending.push(index);
         }
@@ -497,9 +507,12 @@ fn list_github_repos(custom_token: Option<String>, state: tauri::State<'_, AppSt
 
 #[tauri::command(async)]
 fn clone_github_repo(request: CloneRepoRequest, state: tauri::State<'_, AppState>) -> Result<Project, String> {
-    let storage = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?;
-    let storage_token = storage.get_setting("github_token")?;
-    let local_projects = storage.list_projects()?;
+    // El bloqueo se libera antes de clonar: `git clone` puede tardar minutos y
+    // mantener el mutex dejaba congelado todo el resto del panel mientras tanto.
+    let (storage_token, local_projects) = {
+        let storage = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?;
+        (storage.get_setting("github_token")?, storage.list_projects()?)
+    };
     let token = github::GitHubService::resolve_token(None, storage_token);
     let project = github::GitHubService::clone_and_register(
         &request.repo_name,
@@ -509,7 +522,7 @@ fn clone_github_repo(request: CloneRepoRequest, state: tauri::State<'_, AppState
         request.target_path.as_deref(),
         &local_projects,
     )?;
-    storage.insert_project(&project)?;
+    state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.insert_project(&project)?;
     Ok(project)
 }
 
@@ -558,6 +571,23 @@ fn set_default_clone_dir(path: String, state: tauri::State<'_, AppState>) -> Res
     Ok(trimmed.to_string())
 }
 
+#[tauri::command(async)]
+fn pick_folder(app: tauri::AppHandle, title: Option<String>, default_path: Option<String>) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let mut builder = app.dialog().file();
+    if let Some(t) = title {
+        builder = builder.set_title(t);
+    }
+    if let Some(p) = default_path {
+        let trimmed = p.trim();
+        if !trimmed.is_empty() {
+            builder = builder.set_directory(PathBuf::from(trimmed));
+        }
+    }
+    let folder = builder.blocking_pick_folder();
+    Ok(folder.map(|p| p.to_string()))
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -573,7 +603,7 @@ pub fn run() {
             get_disk_report, preview_cleanup, clean_project, get_ide_settings, save_ide_settings, launch_project_tool,
             open_project_url, open_external_url, inspect_project_port,
             get_github_status, save_github_token, list_github_repos, clone_github_repo, safe_offload_project,
-            get_default_clone_dir, set_default_clone_dir
+            get_default_clone_dir, set_default_clone_dir, pick_folder
         ])
         .run(tauri::generate_context!())
         .expect("error while running Dev Command Center");
