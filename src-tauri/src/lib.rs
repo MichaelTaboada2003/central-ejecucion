@@ -19,25 +19,34 @@ use crate::storage::Storage;
 use chrono::Utc;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tauri::Manager;
 use uuid::Uuid;
 
 use std::collections::HashMap;
+
+/// Ventana durante la cual se reutiliza el resultado de `lsof` en lugar de
+/// volver a lanzar el subproceso. El sondeo de la interfaz ocurre cada 6 s y
+/// varias rutas (foco de ventana, eventos de estado, detalle) pueden coincidir
+/// en el mismo instante: la caché evita multiplicar procesos externos.
+const PROBE_TTL: Duration = Duration::from_millis(2_500);
+
+type PortMap = HashMap<u16, Vec<(u32, String)>>;
 
 pub struct AppState {
     storage: Arc<Mutex<Storage>>,
     processes: ProcessManager,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_projects(state: tauri::State<'_, AppState>) -> Result<Vec<Project>, String> {
     let mut projects = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.list_projects()?;
     update_projects_status_batch(&mut projects, &state.processes);
     Ok(projects)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn register_project(request: RegisterProjectRequest, state: tauri::State<'_, AppState>) -> Result<Project, String> {
     let requested_path = absolute_input_path(&request.path)?;
     let root = canonical_project_path(&request.path)?;
@@ -62,7 +71,7 @@ fn register_project(request: RegisterProjectRequest, state: tauri::State<'_, App
     Ok(project)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_project_detail(project_id: String, state: tauri::State<'_, AppState>) -> Result<ProjectDetail, String> {
     let mut project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&project_id)?;
     let mut process_info = state.processes.get(&project_id);
@@ -93,7 +102,7 @@ fn get_project_detail(project_id: String, state: tauri::State<'_, AppState>) -> 
     Ok(ProjectDetail { process: process_info, project, scan, recent_commands })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn refresh_project(project_id: String, state: tauri::State<'_, AppState>) -> Result<Project, String> {
     let mut project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&project_id)?;
     let root = match trusted_project_root(&project) {
@@ -118,13 +127,13 @@ fn refresh_project(project_id: String, state: tauri::State<'_, AppState>) -> Res
     Ok(project)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn unregister_project(project_id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
     state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.delete_project(&project_id)?;
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn run_project(request: RunProjectRequest, app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<ProcessInfo, String> {
     let mut project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&request.project_id)?;
     let root = trusted_project_root(&project)?;
@@ -150,7 +159,10 @@ fn run_project(request: RunProjectRequest, app: tauri::AppHandle, state: tauri::
 
     let spec = command_for_action(&root, &scan, &request.action, request.script.as_deref())?;
     match state.processes.start(app, state.storage.clone(), project.clone(), request.action, spec) {
-        Ok(process) => Ok(process),
+        Ok(process) => {
+            invalidate_probe_cache();
+            Ok(process)
+        }
         Err(error) => {
             let _ = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.update_status(&project.id, ProjectStatus::Error, Some(&error));
             Err(error)
@@ -158,30 +170,32 @@ fn run_project(request: RunProjectRequest, app: tauri::AppHandle, state: tauri::
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn stop_project(project_id: String, app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
-    state.processes.stop(&app, &state.storage, &project_id)
+    let result = state.processes.stop(&app, &state.storage, &project_id);
+    invalidate_probe_cache();
+    result
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn restart_project(project_id: String, app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<ProcessInfo, String> {
     let _ = state.processes.stop(&app, &state.storage, &project_id);
     run_project(RunProjectRequest { project_id, action: "dev".into(), script: None }, app, state)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_disk_report(project_id: String, state: tauri::State<'_, AppState>) -> Result<crate::domain::DiskReport, String> {
     let project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&project_id)?;
     disk::disk_report(&project_id, &trusted_project_root(&project)?)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn preview_cleanup(project_id: String, state: tauri::State<'_, AppState>) -> Result<CleanupPreview, String> {
     let project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&project_id)?;
     disk::cleanup_preview(&project_id, &trusted_project_root(&project)?)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn clean_project(request: CleanupRequest, state: tauri::State<'_, AppState>) -> Result<Vec<String>, String> {
     if !request.confirmed { return Err("Limpieza bloqueada: primero revisa el dry-run y confirma explícitamente la acción.".into()); }
     let project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&request.project_id)?;
@@ -191,18 +205,18 @@ fn clean_project(request: CleanupRequest, state: tauri::State<'_, AppState>) -> 
     Ok(deleted)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_ide_settings(state: tauri::State<'_, AppState>) -> Result<IdeSettings, String> {
     state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.ide_settings()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn save_ide_settings(settings: IdeSettings, state: tauri::State<'_, AppState>) -> Result<IdeSettings, String> {
     state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.save_ide_settings(&settings)?;
     state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.ide_settings()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn launch_project_tool(project_id: String, tool_id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
     let project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&project_id)?;
     let root = trusted_project_root(&project)?;
@@ -210,7 +224,7 @@ fn launch_project_tool(project_id: String, tool_id: String, state: tauri::State<
     ide::launch_tool(&settings, &tool_id, &root)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn open_project_url(project_id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
     let project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&project_id)?;
     if project.status != ProjectStatus::Running && is_project_running(&project).is_none() {
@@ -220,7 +234,7 @@ fn open_project_url(project_id: String, state: tauri::State<'_, AppState>) -> Re
     ide::open_url(&url)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn inspect_project_port(project_id: String, state: tauri::State<'_, AppState>) -> Result<Option<PortInfo>, String> {
     let project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&project_id)?;
     let Some(port) = project.port else { return Ok(None); };
@@ -228,15 +242,15 @@ fn inspect_project_port(project_id: String, state: tauri::State<'_, AppState>) -
     Ok(Some(PortInfo { port, pid, listening: pid.is_some() }))
 }
 
-pub fn detect_all_listening_ports() -> HashMap<u16, Vec<(u32, String)>> {
-    let mut map: HashMap<u16, Vec<(u32, String)>> = HashMap::new();
+pub fn detect_all_listening_ports() -> PortMap {
+    let mut map: PortMap = HashMap::new();
     let Ok(output) = Command::new("lsof").args(["-iTCP", "-sTCP:LISTEN", "-n", "-P", "-F", "pcn"]).output() else {
         return map;
     };
     let Ok(stdout) = String::from_utf8(output.stdout) else {
         return map;
     };
-    
+
     let mut current_pid: Option<u32> = None;
     let mut current_cmd = String::new();
 
@@ -258,73 +272,163 @@ pub fn detect_all_listening_ports() -> HashMap<u16, Vec<(u32, String)>> {
     map
 }
 
+fn port_cache() -> &'static Mutex<Option<(Instant, Arc<PortMap>)>> {
+    static CACHE: OnceLock<Mutex<Option<(Instant, Arc<PortMap>)>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+fn cwd_cache() -> &'static Mutex<HashMap<u32, (Instant, Option<String>)>> {
+    static CACHE: OnceLock<Mutex<HashMap<u32, (Instant, Option<String>)>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Escaneo de puertos con TTL corto. El bloqueo se mantiene durante la consulta
+/// para que dos llamadas simultáneas compartan un único `lsof` en vez de
+/// lanzar uno cada una.
+fn listening_ports() -> Arc<PortMap> {
+    let mut guard = port_cache().lock().unwrap_or_else(|error| error.into_inner());
+    if let Some((captured_at, map)) = guard.as_ref() {
+        if captured_at.elapsed() < PROBE_TTL {
+            return Arc::clone(map);
+        }
+    }
+    let map = Arc::new(detect_all_listening_ports());
+    *guard = Some((Instant::now(), Arc::clone(&map)));
+    map
+}
+
+/// Invalida las cachés de sondeo tras arrancar o detener un proceso, para que
+/// el siguiente refresco de la interfaz refleje el cambio de inmediato.
+fn invalidate_probe_cache() {
+    if let Ok(mut guard) = port_cache().lock() {
+        *guard = None;
+    }
+    if let Ok(mut guard) = cwd_cache().lock() {
+        guard.clear();
+    }
+}
+
+/// Resuelve el directorio de trabajo de varios PID con una sola invocación de
+/// `lsof`, en lugar de un subproceso por PID.
+fn process_cwds(pids: &[u32]) -> HashMap<u32, String> {
+    let mut resolved = HashMap::new();
+    if pids.is_empty() {
+        return resolved;
+    }
+
+    let mut missing = Vec::new();
+    {
+        let mut cache = cwd_cache().lock().unwrap_or_else(|error| error.into_inner());
+        cache.retain(|_, (captured_at, _)| captured_at.elapsed() < PROBE_TTL);
+        for pid in pids {
+            match cache.get(pid) {
+                Some((_, Some(path))) => {
+                    resolved.insert(*pid, path.clone());
+                }
+                Some((_, None)) => {}
+                None => missing.push(*pid),
+            }
+        }
+    }
+
+    if missing.is_empty() {
+        return resolved;
+    }
+
+    let joined = missing.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
+    let queried = Command::new("lsof")
+        .args(["-p", &joined, "-a", "-d", "cwd", "-Fpn"])
+        .output()
+        .ok()
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|stdout| {
+            let mut found: HashMap<u32, String> = HashMap::new();
+            let mut current_pid: Option<u32> = None;
+            for line in stdout.lines() {
+                if let Some(pid_str) = line.strip_prefix('p') {
+                    current_pid = pid_str.trim().parse::<u32>().ok();
+                } else if let Some(path) = line.strip_prefix('n') {
+                    if let Some(pid) = current_pid {
+                        found.entry(pid).or_insert_with(|| path.to_string());
+                    }
+                }
+            }
+            found
+        })
+        .unwrap_or_default();
+
+    let mut cache = cwd_cache().lock().unwrap_or_else(|error| error.into_inner());
+    let now = Instant::now();
+    for pid in missing {
+        let value = queried.get(&pid).cloned();
+        if let Some(path) = value.clone() {
+            resolved.insert(pid, path);
+        }
+        cache.insert(pid, (now, value));
+    }
+    resolved
+}
+
+fn paths_overlap(left: &Path, right: &Path) -> bool {
+    left == right || left.starts_with(right) || right.starts_with(left)
+}
+
 pub fn update_projects_status_batch(
     projects: &mut [Project],
     process_manager: &ProcessManager,
 ) {
-    let mut listening_ports: Option<HashMap<u16, Vec<(u32, String)>>> = None;
-    let mut cwd_cache: HashMap<u32, Option<String>> = HashMap::new();
-
-    for project in projects.iter_mut() {
+    let mut pending = Vec::new();
+    for (index, project) in projects.iter_mut().enumerate() {
         if process_manager.get(&project.id).is_some() {
             project.status = ProjectStatus::Running;
             continue;
         }
+        if project.port.is_some() {
+            pending.push(index);
+        }
+    }
+    if pending.is_empty() {
+        return;
+    }
 
-        let Some(port) = project.port else {
-            continue;
-        };
-
-        let ports_map = listening_ports.get_or_insert_with(detect_all_listening_ports);
-        if let Some(listeners) = ports_map.get(&port) {
-            let canonical = Path::new(&project.canonical_path);
-            let mut is_match = false;
-
-            for &(pid, _) in listeners {
-                let cwd = cwd_cache.entry(pid).or_insert_with(|| get_process_cwd(pid));
-                if let Some(cwd_str) = cwd {
-                    let cwd_path = Path::new(cwd_str);
-                    if cwd_path == canonical || cwd_path.starts_with(canonical) || canonical.starts_with(cwd_path) {
-                        is_match = true;
-                        break;
-                    }
-                }
+    let ports_map = listening_ports();
+    let mut candidate_pids: Vec<u32> = Vec::new();
+    for &index in &pending {
+        let Some(port) = projects[index].port else { continue };
+        let Some(listeners) = ports_map.get(&port) else { continue };
+        for &(pid, _) in listeners {
+            if !candidate_pids.contains(&pid) {
+                candidate_pids.push(pid);
             }
+        }
+    }
+    if candidate_pids.is_empty() {
+        return;
+    }
 
-            if is_match {
-                project.status = ProjectStatus::Running;
-            }
+    let cwds = process_cwds(&candidate_pids);
+    for index in pending {
+        let Some(port) = projects[index].port else { continue };
+        let Some(listeners) = ports_map.get(&port) else { continue };
+        let canonical = Path::new(&projects[index].canonical_path);
+        let is_match = listeners.iter().any(|(pid, _)| {
+            cwds.get(pid).is_some_and(|cwd| paths_overlap(Path::new(cwd), canonical))
+        });
+        if is_match {
+            projects[index].status = ProjectStatus::Running;
         }
     }
 }
 
 fn is_project_running(project: &Project) -> Option<u32> {
     let port = project.port?;
-    let output = Command::new("lsof").args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-t"]).output().ok()?;
-    let stdout = String::from_utf8(output.stdout).ok()?;
+    let ports_map = listening_ports();
+    let listeners = ports_map.get(&port)?;
+    let pids = listeners.iter().map(|(pid, _)| *pid).collect::<Vec<_>>();
+    let cwds = process_cwds(&pids);
     let canonical = Path::new(&project.canonical_path);
-    for line in stdout.lines() {
-        if let Ok(pid) = line.trim().parse::<u32>() {
-            if let Some(cwd) = get_process_cwd(pid) {
-                let cwd_path = Path::new(&cwd);
-                if cwd_path == canonical || cwd_path.starts_with(canonical) || canonical.starts_with(cwd_path) {
-                    return Some(pid);
-                }
-            }
-        }
-    }
-    None
-}
-
-fn get_process_cwd(pid: u32) -> Option<String> {
-    let output = Command::new("lsof").args(["-p", &pid.to_string(), "-a", "-d", "cwd", "-Fn"]).output().ok()?;
-    let stdout = String::from_utf8(output.stdout).ok()?;
-    for line in stdout.lines() {
-        if let Some(path) = line.strip_prefix('n') {
-            return Some(path.to_string());
-        }
-    }
-    None
+    pids.into_iter()
+        .find(|pid| cwds.get(pid).is_some_and(|cwd| paths_overlap(Path::new(cwd), canonical)))
 }
 
 fn absolute_input_path(raw: &str) -> Result<PathBuf, String> {
@@ -343,20 +447,20 @@ fn trusted_project_root(project: &Project) -> Result<PathBuf, String> {
     Ok(canonical)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_github_status(custom_token: Option<String>, state: tauri::State<'_, AppState>) -> Result<GitHubAccountStatus, String> {
     let storage_token = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_setting("github_token")?;
     let token = github::GitHubService::resolve_token(custom_token.as_deref(), storage_token);
     github::GitHubService::get_account_status(token.as_deref())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn save_github_token(token: String, state: tauri::State<'_, AppState>) -> Result<GitHubAccountStatus, String> {
     state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.set_setting("github_token", &token)?;
     github::GitHubService::get_account_status(Some(&token))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_github_repos(custom_token: Option<String>, state: tauri::State<'_, AppState>) -> Result<Vec<GitHubRepo>, String> {
     let storage_token = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_setting("github_token")?;
     let token = github::GitHubService::resolve_token(custom_token.as_deref(), storage_token);
@@ -364,7 +468,7 @@ fn list_github_repos(custom_token: Option<String>, state: tauri::State<'_, AppSt
     github::GitHubService::list_repos(token.as_deref(), &local_projects)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn clone_github_repo(request: CloneRepoRequest, state: tauri::State<'_, AppState>) -> Result<Project, String> {
     let storage_token = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_setting("github_token")?;
     let token = github::GitHubService::resolve_token(None, storage_token);
@@ -379,7 +483,7 @@ fn clone_github_repo(request: CloneRepoRequest, state: tauri::State<'_, AppState
     Ok(project)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn safe_offload_project(project_id: String, force: bool, app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<SafeOffloadResult, String> {
     let project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&project_id)?;
     if state.processes.get(&project_id).is_some() {

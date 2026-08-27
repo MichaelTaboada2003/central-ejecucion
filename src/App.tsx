@@ -4,11 +4,11 @@ import {
   AlertTriangle, AppWindow, ArrowLeft, ArrowUpRight, Bot, Box, Check,
   ChevronRight, CircleStop, Cloud, CloudOff, Command, Copy, Database,
   DownloadCloud, FileCode2, FolderOpen, GitFork, Globe, HardDrive, Layers,
-  LayoutDashboard, LoaderCircle, Lock, PackageOpen, Play, Plus, Radio,
+  LayoutDashboard, LayoutGrid, List, LoaderCircle, Lock, PackageOpen, Play, Plus, Radio,
   RefreshCw, RotateCcw, Search, Settings2, ShieldCheck, SquareTerminal,
   Star, Terminal, Trash2, Wrench, X,
 } from 'lucide-react'
-import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { FormEvent, ReactNode, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, isTauri, mockLogs } from './api'
 import type {
   CleanupPreview, DiskReport, GitHubAccountStatus, GitHubRepo,
@@ -18,6 +18,53 @@ import './App.css'
 
 type Tab = 'summary' | 'processes' | 'dependencies' | 'disk' | 'scripts' | 'configuration'
 type Modal = 'register' | 'settings' | 'palette' | null
+
+/** Entrada de log con identidad estable para que React no recree la lista al
+ *  desplazarse el búfer circular. */
+type TerminalEntry = LogEntry & { seq: number }
+
+/** Sondeo de estado de proyectos. Se pausa cuando la ventana está oculta. */
+const POLL_INTERVAL_MS = 6000
+/** Líneas de terminal conservadas en memoria. */
+const LOG_BUFFER_LIMIT = 500
+
+let logSequence = 0
+
+function toTerminalEntries(entries: LogEntry[]): TerminalEntry[] {
+  return entries.map(entry => ({ ...entry, seq: logSequence++ }))
+}
+
+function appendTerminalEntries(current: TerminalEntry[], incoming: TerminalEntry[]): TerminalEntry[] {
+  const next = current.concat(incoming)
+  return next.length > LOG_BUFFER_LIMIT ? next.slice(next.length - LOG_BUFFER_LIMIT) : next
+}
+
+const logTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+})
+const logTimeCache = new Map<string, string>()
+
+/** `toLocaleTimeString` es costoso y las marcas de tiempo se repiten mucho
+ *  dentro de un mismo lote, así que se memoiza el formateo. */
+function formatLogTime(timestamp: string): string {
+  const cached = logTimeCache.get(timestamp)
+  if (cached) return cached
+  const formatted = logTimeFormatter.format(new Date(timestamp))
+  if (logTimeCache.size > 4000) logTimeCache.clear()
+  logTimeCache.set(timestamp, formatted)
+  return formatted
+}
+
+const TerminalLine = memo(function TerminalLine({ entry }: { entry: TerminalEntry }) {
+  return (
+    <p className={entry.stream}>
+      <time>{formatLogTime(entry.timestamp)}</time>
+      <span className="terminal-line-content">{entry.line}</span>
+    </p>
+  )
+})
 
 const statusLabels: Record<ProjectStatus, string> = {
   running: 'En ejecución',
@@ -67,7 +114,7 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [notice, setNotice] = useState<{ kind: 'success' | 'error' | 'info'; text: string } | null>(null)
-  const [logs, setLogs] = useState<LogEntry[]>([])
+  const [logs, setLogs] = useState<TerminalEntry[]>([])
   const [disk, setDisk] = useState<DiskReport | null>(null)
   const [cleanup, setCleanup] = useState<CleanupPreview | null>(null)
   const [ideSettings, setIdeSettings] = useState<IdeSettings | null>(null)
@@ -77,11 +124,22 @@ export default function App() {
   const [loadingGithub, setLoadingGithub] = useState(false)
   const [offloadCandidate, setOffloadCandidate] = useState<Project | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
+  const selectedIdRef = useRef<string | null>(null)
+  const projectsSignature = useRef('')
+  const detailSignature = useRef('')
 
+  selectedIdRef.current = selectedId
+
+  // El sondeo periódico devuelve casi siempre la misma carga útil: comparar la
+  // firma evita reemplazar el estado y volver a renderizar todo el árbol.
   const loadProjects = useCallback(async (preserveSelection = true) => {
     try {
       const next = await api.listProjects()
-      setProjects(next)
+      const signature = JSON.stringify(next)
+      if (signature !== projectsSignature.current) {
+        projectsSignature.current = signature
+        setProjects(next)
+      }
       if (!preserveSelection && next[0]) setSelectedId(next[0].id)
     } catch (error) {
       showError(error)
@@ -109,8 +167,13 @@ export default function App() {
   const loadDetail = useCallback(async (id: string) => {
     try {
       const next = await api.getProjectDetail(id)
-      setDetail(next)
+      const signature = JSON.stringify(next)
+      if (signature !== detailSignature.current) {
+        detailSignature.current = signature
+        setDetail(next)
+      }
     } catch (error) {
+      detailSignature.current = ''
       setDetail(null)
       setSelectedId(null)
       await loadProjects(true)
@@ -132,6 +195,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    detailSignature.current = ''
     if (selectedId) {
       setTab('summary')
       setLogs([])
@@ -162,54 +226,77 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKeydown)
   }, [])
 
+  // Una única suscripción para toda la vida de la app: el proyecto activo se
+  // lee de una referencia, así el listener no se recrea en cada selección.
   useEffect(() => {
+    if (!isTauri) return
     let unlisten: (() => void) | undefined
-    if (isTauri) {
-      void listen<LogEntry>('project://log', ({ payload }) => {
-        if (payload.projectId === selectedId) {
-          setLogs(current => [...current.slice(-499), payload])
-        }
-      }).then(value => {
-        unlisten = value
-      })
-    } else if (selectedId && mockLogs[selectedId]) {
-      setLogs(mockLogs[selectedId])
+    let disposed = false
+    void listen<LogEntry[] | LogEntry>('project://log', ({ payload }) => {
+      const batch = Array.isArray(payload) ? payload : [payload]
+      const relevant = batch.filter(entry => entry.projectId === selectedIdRef.current)
+      if (!relevant.length) return
+      const incoming = toTerminalEntries(relevant)
+      setLogs(current => appendTerminalEntries(current, incoming))
+    }).then(value => {
+      if (disposed) value()
+      else unlisten = value
+    })
+    return () => {
+      disposed = true
+      unlisten?.()
     }
-    return () => unlisten?.()
+  }, [])
+
+  useEffect(() => {
+    if (isTauri) return
+    if (selectedId && mockLogs[selectedId]) setLogs(toTerminalEntries(mockLogs[selectedId]))
   }, [selectedId])
 
   useEffect(() => {
+    if (!isTauri) return
     let unlisten: (() => void) | undefined
-    if (isTauri) {
-      void listen('project://status', () => {
-        void loadProjects()
-        if (selectedId) void loadDetail(selectedId)
-      }).then(value => {
-        unlisten = value
-      })
+    let disposed = false
+    void listen('project://status', () => {
+      void loadProjects()
+      const current = selectedIdRef.current
+      if (current) void loadDetail(current)
+    }).then(value => {
+      if (disposed) value()
+      else unlisten = value
+    })
+    return () => {
+      disposed = true
+      unlisten?.()
     }
-    return () => unlisten?.()
-  }, [loadDetail, loadProjects, selectedId])
+  }, [loadDetail, loadProjects])
 
   useEffect(() => {
     const interval = setInterval(() => {
+      // Sondear una ventana oculta solo gasta CPU: al recuperar el foco se
+      // vuelve a sincronizar de inmediato.
+      if (document.hidden) return
       void loadProjects(true)
-    }, 6000)
+    }, POLL_INTERVAL_MS)
     const onFocus = () => {
       void loadProjects(true)
-      if (selectedId) void loadDetail(selectedId)
+      const current = selectedIdRef.current
+      if (current) void loadDetail(current)
     }
     window.addEventListener('focus', onFocus)
     return () => {
       clearInterval(interval)
       window.removeEventListener('focus', onFocus)
     }
-  }, [loadProjects, loadDetail, selectedId])
+  }, [loadProjects, loadDetail])
 
   const visibleProjects = useMemo(() => {
+    const needle = filter.trim().toLowerCase()
     return projects.filter(project => {
+      if (statusFilter !== 'all' && project.status !== statusFilter) return false
+      if (!needle) return true
       const haystack = `${project.name} ${project.path} ${project.projectType} ${project.frameworks.join(' ')} ${project.tags.join(' ')}`.toLowerCase()
-      return haystack.includes(filter.toLowerCase()) && (statusFilter === 'all' || project.status === statusFilter)
+      return haystack.includes(needle)
     })
   }, [filter, projects, statusFilter])
 
@@ -226,8 +313,8 @@ export default function App() {
     setBusy(name)
     try {
       await operation()
-      await loadProjects()
-      if (selectedId) await loadDetail(selectedId)
+      // Ambos refrescos son independientes: encadenarlos duplicaba la espera.
+      await Promise.all([loadProjects(), selectedId ? loadDetail(selectedId) : null])
     } catch (error) {
       showError(error)
     } finally {
@@ -368,29 +455,32 @@ export default function App() {
     }
   }
 
-  const isGitHubConnected = useCallback(
-    (project: Project) => {
-      if (project.tags.includes('github')) return true
-      return githubRepos.some(
-        r =>
-          (r.localProjectId && r.localProjectId === project.id) ||
-          (r.localPath && r.localPath === project.canonicalPath) ||
-          r.name.toLowerCase() === project.name.toLowerCase()
-      )
-    },
-    [githubRepos]
-  )
+  // Un índice por clave evita recorrer la lista completa de repos una vez por
+  // proyecto en cada render de la barra lateral y del dashboard.
+  const githubIndex = useMemo(() => {
+    const byProjectId = new Map<string, GitHubRepo>()
+    const byPath = new Map<string, GitHubRepo>()
+    const byName = new Map<string, GitHubRepo>()
+    for (const repo of githubRepos) {
+      if (repo.localProjectId && !byProjectId.has(repo.localProjectId)) byProjectId.set(repo.localProjectId, repo)
+      if (repo.localPath && !byPath.has(repo.localPath)) byPath.set(repo.localPath, repo)
+      const name = repo.name.toLowerCase()
+      if (!byName.has(name)) byName.set(name, repo)
+    }
+    return { byProjectId, byPath, byName }
+  }, [githubRepos])
 
   const getGitHubRepo = useCallback(
-    (project: Project) => {
-      return githubRepos.find(
-        r =>
-          (r.localProjectId && r.localProjectId === project.id) ||
-          (r.localPath && r.localPath === project.canonicalPath) ||
-          r.name.toLowerCase() === project.name.toLowerCase()
-      )
-    },
-    [githubRepos]
+    (project: Project) =>
+      githubIndex.byProjectId.get(project.id) ??
+      githubIndex.byPath.get(project.canonicalPath) ??
+      githubIndex.byName.get(project.name.toLowerCase()),
+    [githubIndex]
+  )
+
+  const isGitHubConnected = useCallback(
+    (project: Project) => project.tags.includes('github') || getGitHubRepo(project) !== undefined,
+    [getGitHubRepo]
   )
 
   return (
@@ -693,8 +783,8 @@ function ProjectWorkspace({
   gitHubRepo?: GitHubRepo
   tab: Tab
   setTab: (tab: Tab) => void
-  logs: LogEntry[]
-  setLogs: React.Dispatch<React.SetStateAction<LogEntry[]>>
+  logs: TerminalEntry[]
+  setLogs: React.Dispatch<React.SetStateAction<TerminalEntry[]>>
   disk: DiskReport | null
   busy: string | null
   onBack: () => void
@@ -1249,22 +1339,33 @@ function ProcessesTab({
   onNotify,
 }: {
   project: Project
-  logs: LogEntry[]
-  setLogs: React.Dispatch<React.SetStateAction<LogEntry[]>>
+  logs: TerminalEntry[]
+  setLogs: React.Dispatch<React.SetStateAction<TerminalEntry[]>>
   process: ProcessInfo | null
   onNotify: (text: string, kind: 'success' | 'error') => void
 }) {
   const [streamFilter, setStreamFilter] = useState<'all' | 'stdout' | 'stderr'>('all')
-  const terminalEndRef = useRef<HTMLDivElement>(null)
+  const terminalBodyRef = useRef<HTMLDivElement>(null)
+  const followTail = useRef(true)
 
   const filteredLogs = useMemo(() => {
     if (streamFilter === 'all') return logs
     return logs.filter(l => l.stream === streamFilter)
   }, [logs, streamFilter])
 
+  // Un `scrollIntoView` suave por lote encadena animaciones y bloquea el hilo
+  // principal; basta con fijar `scrollTop` y solo si el usuario sigue al final.
   useEffect(() => {
-    terminalEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [filteredLogs.length])
+    const body = terminalBodyRef.current
+    if (!body || !followTail.current) return
+    body.scrollTop = body.scrollHeight
+  }, [filteredLogs])
+
+  const handleTerminalScroll = () => {
+    const body = terminalBodyRef.current
+    if (!body) return
+    followTail.current = body.scrollHeight - body.scrollTop - body.clientHeight < 48
+  }
 
   const copyAllLogs = () => {
     const text = logs.map(l => `[${l.timestamp}] [${l.stream}] ${l.line}`).join('\n')
@@ -1351,14 +1452,14 @@ function ProcessesTab({
           </div>
         </div>
 
-        <div className="terminal-body" aria-live="polite">
+        <div
+          className="terminal-body"
+          aria-live="polite"
+          ref={terminalBodyRef}
+          onScroll={handleTerminalScroll}
+        >
           {filteredLogs.length ? (
-            filteredLogs.map((entry, index) => (
-              <p key={`${entry.timestamp}-${index}`} className={entry.stream}>
-                <time>{new Date(entry.timestamp).toLocaleTimeString()}</time>
-                <span className="terminal-line-content">{entry.line}</span>
-              </p>
-            ))
+            filteredLogs.map(entry => <TerminalLine key={entry.seq} entry={entry} />)
           ) : (
             <p className="muted-log">
               {project.status === 'running'
@@ -1366,7 +1467,6 @@ function ProcessesTab({
                 : 'Inicia el servidor de desarrollo o un script para ver los logs en tiempo real.'}
             </p>
           )}
-          <div ref={terminalEndRef} />
         </div>
       </section>
     </div>
@@ -2304,6 +2404,7 @@ function GitHubHubView({
 }) {
   const [filter, setFilter] = useState<'all' | 'cloud' | 'local' | 'public' | 'private'>('all')
   const [query, setQuery] = useState('')
+  const [layoutMode, setLayoutMode] = useState<'table' | 'grid'>('table')
 
   const stats = useMemo(() => {
     const total = repos.length
@@ -2332,14 +2433,7 @@ function GitHubHubView({
     <div className="github-hub-layout">
       <div className="dashboard-title">
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <p className="eyebrow">WORKSPACE EN LA NUBE</p>
-            {status?.authenticated && (
-              <span className="status-pill status-running" style={{ fontSize: 11 }}>
-                Conectado como @{status.username}
-              </span>
-            )}
-          </div>
+          <p className="eyebrow">WORKSPACE EN LA NUBE</p>
           <h1>GitHub Cloud Hub</h1>
           <p>
             Explora tus repositorios remotos, clónalos bajo demanda con un clic y libéralos de tu disco de forma segura cuando termines de trabajar.
@@ -2384,31 +2478,63 @@ function GitHubHubView({
 
       <section className="dashboard-section">
         <div className="section-title">
-          <div className="search" style={{ maxWidth: 360, width: '100%' }}>
-            <Search size={15} />
-            <input
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-              placeholder="Buscar en tus repositorios de GitHub…"
-              aria-label="Buscar repositorios"
-            />
+          <div>
+            <h2>Repositorios en la Nube</h2>
+            <p>
+              {filteredRepos.length
+                ? `${filteredRepos.length} repositorio(s) disponibles en tu cuenta @${status?.username || 'MichaelTaboada2003'}`
+                : 'No se encontraron repositorios con ese criterio'}
+            </p>
           </div>
-          <div className="filter-group">
-            <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>
-              Todos ({stats.total})
-            </button>
-            <button className={filter === 'cloud' ? 'active' : ''} onClick={() => setFilter('cloud')}>
-              Solo en Nube ({stats.cloudOnly})
-            </button>
-            <button className={filter === 'local' ? 'active' : ''} onClick={() => setFilter('local')}>
-              Clonados ({stats.cloned})
-            </button>
-            <button className={filter === 'public' ? 'active' : ''} onClick={() => setFilter('public')}>
-              Públicos
-            </button>
-            <button className={filter === 'private' ? 'active' : ''} onClick={() => setFilter('private')}>
-              Privados
-            </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <div className="search" style={{ maxWidth: 280, width: '100%' }}>
+              <Search size={15} />
+              <input
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder="Buscar repositorios…"
+                aria-label="Buscar repositorios"
+              />
+            </div>
+            <div className="filter-group">
+              {(['all', 'cloud', 'local', 'public', 'private'] as const).map(f => {
+                const label =
+                  f === 'all'
+                    ? `Todos (${stats.total})`
+                    : f === 'cloud'
+                    ? `Solo Nube (${stats.cloudOnly})`
+                    : f === 'local'
+                    ? `Clonados (${stats.cloned})`
+                    : f === 'public'
+                    ? 'Públicos'
+                    : 'Privados'
+                return (
+                  <button
+                    key={f}
+                    className={filter === f ? 'active' : ''}
+                    onClick={() => setFilter(f)}
+                  >
+                    {label}
+                  </button>
+                )
+              })}
+            </div>
+            <div className="view-mode-toggles">
+              <button
+                className={`view-toggle-btn ${layoutMode === 'table' ? 'active' : ''}`}
+                onClick={() => setLayoutMode('table')}
+                title="Vista en tabla (Igual al Panel Local)"
+              >
+                <List size={15} />
+              </button>
+              <button
+                className={`view-toggle-btn ${layoutMode === 'grid' ? 'active' : ''}`}
+                onClick={() => setLayoutMode('grid')}
+                title="Vista en tarjetas"
+              >
+                <LayoutGrid size={15} />
+              </button>
+            </div>
           </div>
         </div>
 
@@ -2419,116 +2545,258 @@ function GitHubHubView({
             <p>Consultando el catálogo de @{status?.username || 'tu cuenta'}…</p>
           </div>
         ) : filteredRepos.length ? (
-          <div className="github-grid">
-            {filteredRepos.map(repo => {
-              const isCloning = busy === `clone:${repo.name}`
-              return (
-                <div className={`github-card ${repo.isCloned ? 'is-cloned' : ''}`} key={repo.id}>
-                  <div className="github-card-header">
-                    <div className="github-repo-name">
-                      <a
-                        href={repo.htmlUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="github-title-link"
-                        title="Ver en GitHub"
-                      >
-                        <strong>{repo.name}</strong>
-                        <ArrowUpRight size={14} />
-                      </a>
-                      <span className="github-full-name">{repo.fullName}</span>
-                    </div>
-                    <div className="github-badges">
+          layoutMode === 'table' ? (
+            <div className="github-table" role="table">
+              <div className="github-table-head" role="row">
+                <span>Repositorio</span>
+                <span>Lenguaje / Visibilidad</span>
+                <span>Estado</span>
+                <span>Métricas</span>
+                <span>Actualización</span>
+                <span style={{ textAlign: 'right' }}>Acciones</span>
+              </div>
+              {filteredRepos.map(repo => {
+                const isCloning = busy === `clone:${repo.name}`
+                return (
+                  <div
+                    className={`github-table-row ${repo.isCloned ? 'is-cloned' : ''}`}
+                    key={repo.id}
+                  >
+                    <span className="project-cell">
+                      <span className="mini-icon">
+                        <GitHubLogo size={18} color={repo.isCloned ? 'var(--accent-primary)' : 'var(--accent-cyan)'} />
+                      </span>
+                      <span className="project-info">
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <a
+                            href={repo.htmlUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="github-title-link"
+                            title="Abrir en GitHub"
+                          >
+                            <strong>{repo.name}</strong>
+                            <ArrowUpRight size={13} style={{ opacity: 0.6 }} />
+                          </a>
+                        </span>
+                        <small title={repo.description || repo.fullName}>
+                          {repo.fullName} {repo.description ? `· ${repo.description}` : ''}
+                        </small>
+                      </span>
+                    </span>
+
+                    <span className="stack-list" style={{ alignItems: 'center' }}>
+                      {repo.language ? (
+                        <em className={`stack-badge ${getStackClass(repo.language)}`}>
+                          {repo.language}
+                        </em>
+                      ) : (
+                        <em className="stack-badge">Repo</em>
+                      )}
                       {repo.isPrivate ? (
                         <span className="vis-badge private" title="Repositorio privado">
-                          <Lock size={11} /> Privado
+                          <Lock size={10} /> Privado
                         </span>
                       ) : (
                         <span className="vis-badge public" title="Repositorio público">
-                          <Globe size={11} /> Público
+                          <Globe size={10} /> Público
                         </span>
                       )}
-                    </div>
-                  </div>
-
-                  <p className="github-desc">{repo.description || 'Sin descripción en GitHub.'}</p>
-
-                  <div className="github-meta-row">
-                    {repo.language && (
-                      <span className="github-lang">
-                        <span className="lang-dot" />
-                        {repo.language}
-                      </span>
-                    )}
-                    {repo.stars > 0 && (
-                      <span className="github-stat">
-                        <Star size={12} /> {repo.stars}
-                      </span>
-                    )}
-                    {repo.forks > 0 && (
-                      <span className="github-stat">
-                        <GitFork size={12} /> {repo.forks}
-                      </span>
-                    )}
-                    <span className="github-updated">
-                      Actualizado: {new Date(repo.updatedAt).toLocaleDateString()}
                     </span>
-                  </div>
 
-                  <div className="github-card-actions">
-                    {repo.isCloned ? (
-                      <>
-                        <div className="cloned-badge">
-                          <Check size={13} color="var(--accent-primary)" />
-                          <span>En tu Mac (Listo)</span>
-                        </div>
-                        <div style={{ display: 'flex', gap: 6 }}>
+                    <span>
+                      {repo.isCloned ? (
+                        <span className="status-pill status-running">
+                          <Check size={11} /> En tu Mac
+                        </span>
+                      ) : (
+                        <span className="status-pill status-stopped">
+                          <Cloud size={11} /> Solo Nube
+                        </span>
+                      )}
+                    </span>
+
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: 'var(--text-secondary)' }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <Star size={12} color="var(--accent-amber)" /> {repo.stars}
+                      </span>
+                      {repo.forks > 0 && (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          <GitFork size={12} /> {repo.forks}
+                        </span>
+                      )}
+                    </span>
+
+                    <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
+                      {new Date(repo.updatedAt).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' })}
+                    </span>
+
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end' }}>
+                      {repo.isCloned ? (
+                        <>
                           <button
                             className="secondary"
                             onClick={() => repo.localProjectId && onOpenLocal(repo.localProjectId)}
-                            style={{ height: 28, fontSize: 12, padding: '0 10px' }}
+                            style={{ height: 28, fontSize: 11, padding: '0 10px', borderRadius: 4 }}
                           >
                             Abrir en Panel
                           </button>
                           <button
                             className="danger-outline"
                             onClick={() => onSafeOffload(repo)}
-                            style={{ height: 28, fontSize: 12, padding: '0 10px' }}
+                            style={{ height: 28, fontSize: 11, padding: '0 10px', borderRadius: 4 }}
                             title="Liberar espacio en disco eliminando la copia local de forma segura"
                           >
-                            Archivar a Nube
+                            Archivar
                           </button>
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        <div className="cloud-badge">
-                          <Cloud size={13} color="var(--text-tertiary)" />
-                          <span>Solo en Nube (0 MB)</span>
-                        </div>
-                        <button
-                          className="primary"
-                          onClick={() => onClone(repo)}
-                          disabled={isCloning || !!busy}
-                          style={{ height: 28, fontSize: 12, padding: '0 12px' }}
-                        >
-                          {isCloning ? (
-                            <>
-                              <LoaderCircle size={13} className="spin" /> Clonando…
-                            </>
-                          ) : (
-                            <>
-                              <DownloadCloud size={13} /> Clonar y Registrar
-                            </>
-                          )}
-                        </button>
-                      </>
-                    )}
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            className="primary"
+                            onClick={() => onClone(repo)}
+                            disabled={isCloning || !!busy}
+                            style={{ height: 28, fontSize: 11, padding: '0 12px', borderRadius: 4 }}
+                          >
+                            {isCloning ? (
+                              <>
+                                <LoaderCircle size={12} className="spin" /> Clonando…
+                              </>
+                            ) : (
+                              <>
+                                <DownloadCloud size={12} /> Clonar 1-Clic
+                              </>
+                            )}
+                          </button>
+                          <a
+                            href={repo.htmlUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="icon-btn"
+                            style={{ height: 28, width: 28, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4, opacity: 0.6, border: 'none', background: 'transparent', color: 'var(--text-secondary)' }}
+                            title="Ver en GitHub"
+                          >
+                            <ArrowUpRight size={14} />
+                          </a>
+                        </>
+                      )}
+                    </span>
                   </div>
-                </div>
-              )
-            })}
-          </div>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="github-grid">
+              {filteredRepos.map(repo => {
+                const isCloning = busy === `clone:${repo.name}`
+                return (
+                  <div className={`github-card ${repo.isCloned ? 'is-cloned' : ''}`} key={repo.id}>
+                    <div className="github-card-header">
+                      <div className="github-repo-name">
+                        <a
+                          href={repo.htmlUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="github-title-link"
+                          title="Ver en GitHub"
+                        >
+                          <strong>{repo.name}</strong>
+                          <ArrowUpRight size={14} />
+                        </a>
+                        <span className="github-full-name">{repo.fullName}</span>
+                      </div>
+                      <div className="github-badges">
+                        {repo.isPrivate ? (
+                          <span className="vis-badge private" title="Repositorio privado">
+                            <Lock size={11} /> Privado
+                          </span>
+                        ) : (
+                          <span className="vis-badge public" title="Repositorio público">
+                            <Globe size={11} /> Público
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <p className="github-desc">{repo.description || 'Sin descripción en GitHub.'}</p>
+
+                    <div className="github-meta-row">
+                      {repo.language && (
+                        <span className="github-lang">
+                          <span className="lang-dot" />
+                          {repo.language}
+                        </span>
+                      )}
+                      {repo.stars > 0 && (
+                        <span className="github-stat">
+                          <Star size={12} /> {repo.stars}
+                        </span>
+                      )}
+                      {repo.forks > 0 && (
+                        <span className="github-stat">
+                          <GitFork size={12} /> {repo.forks}
+                        </span>
+                      )}
+                      <span className="github-updated">
+                        Actualizado: {new Date(repo.updatedAt).toLocaleDateString()}
+                      </span>
+                    </div>
+
+                    <div className="github-card-actions">
+                      {repo.isCloned ? (
+                        <>
+                          <div className="cloned-badge">
+                            <Check size={13} color="var(--accent-primary)" />
+                            <span>En tu Mac (Listo)</span>
+                          </div>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <button
+                              className="secondary"
+                              onClick={() => repo.localProjectId && onOpenLocal(repo.localProjectId)}
+                              style={{ height: 28, fontSize: 12, padding: '0 10px' }}
+                            >
+                              Abrir en Panel
+                            </button>
+                            <button
+                              className="danger-outline"
+                              onClick={() => onSafeOffload(repo)}
+                              style={{ height: 28, fontSize: 12, padding: '0 10px' }}
+                              title="Liberar espacio en disco eliminando la copia local de forma segura"
+                            >
+                              Archivar a Nube
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="cloud-badge">
+                            <Cloud size={13} color="var(--text-tertiary)" />
+                            <span>Solo en Nube (0 MB)</span>
+                          </div>
+                          <button
+                            className="primary"
+                            onClick={() => onClone(repo)}
+                            disabled={isCloning || !!busy}
+                            style={{ height: 28, fontSize: 12, padding: '0 12px' }}
+                          >
+                            {isCloning ? (
+                              <>
+                                <LoaderCircle size={13} className="spin" /> Clonando…
+                              </>
+                            ) : (
+                              <>
+                                <DownloadCloud size={13} /> Clonar y Registrar
+                              </>
+                            )}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )
         ) : (
           <div className="empty-card" style={{ padding: '36px 20px', textAlign: 'center' }}>
             <Cloud size={32} style={{ margin: '0 auto 12px', display: 'block', opacity: 0.5 }} />

@@ -5,14 +5,23 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
+/// Evento de logs. La carga útil es un lote (`Vec<LogEntry>`): un servidor de
+/// desarrollo puede escupir cientos de líneas por segundo y emitir un evento
+/// IPC por línea saturaba el hilo del webview y forzaba un render por línea.
 pub const LOG_EVENT: &str = "project://log";
 pub const STATUS_EVENT: &str = "project://status";
+
+/// Cadencia máxima de emisión de lotes de log.
+const LOG_FLUSH_INTERVAL: Duration = Duration::from_millis(120);
+/// Tamaño a partir del cual se emite el lote sin esperar al temporizador.
+const LOG_BATCH_SIZE: usize = 200;
 
 #[derive(Clone, Default)]
 pub struct ProcessManager {
@@ -122,9 +131,44 @@ impl ProcessManager {
 }
 
 fn emit_reader<R: Read + Send + 'static>(app: AppHandle, project_id: String, stream: &'static str, reader: R) {
+    let (sender, receiver) = mpsc::channel::<LogEntry>();
+
     thread::spawn(move || {
         for line in BufReader::new(reader).lines().map_while(Result::ok) {
-            let _ = app.emit(LOG_EVENT, LogEntry { project_id: project_id.clone(), stream: stream.into(), line, timestamp: Utc::now().to_rfc3339() });
+            let entry = LogEntry { project_id: project_id.clone(), stream: stream.into(), line, timestamp: Utc::now().to_rfc3339() };
+            if sender.send(entry).is_err() {
+                return;
+            }
+        }
+    });
+
+    thread::spawn(move || {
+        let mut batch: Vec<LogEntry> = Vec::with_capacity(LOG_BATCH_SIZE);
+        let mut last_flush = Instant::now();
+        loop {
+            match receiver.recv_timeout(LOG_FLUSH_INTERVAL) {
+                Ok(entry) => {
+                    batch.push(entry);
+                    if batch.len() >= LOG_BATCH_SIZE || last_flush.elapsed() >= LOG_FLUSH_INTERVAL {
+                        let _ = app.emit(LOG_EVENT, &batch);
+                        batch.clear();
+                        last_flush = Instant::now();
+                    }
+                }
+                Err(RecvTimeoutError::Timeout) => {
+                    if !batch.is_empty() {
+                        let _ = app.emit(LOG_EVENT, &batch);
+                        batch.clear();
+                    }
+                    last_flush = Instant::now();
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    if !batch.is_empty() {
+                        let _ = app.emit(LOG_EVENT, &batch);
+                    }
+                    return;
+                }
+            }
         }
     });
 }

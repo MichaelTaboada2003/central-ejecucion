@@ -1513,6 +1513,9 @@ code, kbd, pre, .mono {
   height: 420px;
   padding: 16px;
   overflow: auto;
+  /* Aísla el reflow del terminal: la salida en vivo no invalida el layout
+     del resto de la pantalla. */
+  contain: layout paint style;
   color: #d1e3d9;
   font: 12px/1.7 var(--font-mono);
   background: #080c14;
@@ -2616,6 +2619,92 @@ code, kbd, pre, .mono {
   border: 1px solid var(--border-subtle);
 }
 
+/* GitHub Cloud Table (Matching Dashboard Panel Local Table) */
+.github-table {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+.github-table-head, .github-table-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2.6fr) minmax(0, 1.4fr) minmax(0, 1.2fr) minmax(0, 0.9fr) minmax(0, 1.1fr) minmax(0, 1.8fr);
+  align-items: center;
+  gap: 16px;
+  padding: 0 20px;
+}
+
+.github-table-head {
+  height: 44px;
+  color: var(--text-tertiary);
+  border-bottom: 1px solid var(--border-muted);
+  font: 600 11px var(--font-mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.github-table-row {
+  min-height: 72px;
+  width: 100%;
+  color: var(--text-secondary);
+  text-align: left;
+  background: transparent;
+  border-bottom: 1px solid var(--border-subtle);
+  transition: all var(--transition-fast);
+}
+
+.github-table-row:last-child {
+  border-bottom: none;
+}
+
+.github-table-row:hover {
+  background: var(--bg-glass-hover);
+  color: var(--text-primary);
+}
+
+.github-table-row.is-cloned {
+  border-left: 3px solid var(--accent-primary);
+  background: linear-gradient(90deg, rgba(16, 185, 129, 0.02) 0%, transparent 100%);
+}
+
+.view-mode-toggles {
+  display: inline-flex;
+  background: var(--bg-surface-2);
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  gap: 2px;
+}
+
+.view-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.view-toggle-btn.active {
+  background: var(--accent-primary-subtle);
+  color: var(--accent-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.view-toggle-btn:hover:not(.active) {
+  color: var(--text-primary);
+}
+
 /* ==========================================================================
    RESPONSIVE MEDIA QUERIES
    ========================================================================== */
@@ -2630,6 +2719,13 @@ code, kbd, pre, .mono {
     grid-template-columns: minmax(0, 2.2fr) minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 0.8fr) 24px;
   }
   .table-head span:nth-child(5), .table-row > span:nth-child(5) {
+    display: none;
+  }
+  .github-table-head, .github-table-row {
+    grid-template-columns: minmax(0, 2.2fr) minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.4fr);
+  }
+  .github-table-head span:nth-child(4), .github-table-head span:nth-child(5),
+  .github-table-row > span:nth-child(4), .github-table-row > span:nth-child(5) {
     display: none;
   }
   .github-grid {
