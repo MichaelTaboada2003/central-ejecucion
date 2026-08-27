@@ -272,23 +272,6 @@ export default function App() {
     })
   }
 
-  const handleUnregister = (projectId: string, e?: React.MouseEvent) => {
-    if (e) e.stopPropagation()
-    const proj = projects.find(p => p.id === projectId)
-    const name = proj?.name || 'este proyecto'
-    if (!window.confirm(`¿Deseas desvincular «${name}» del Centro de Mando?\n\n(No se eliminarán archivos en el disco, solo se quitará de la lista).`)) {
-      return
-    }
-    return action(`unregister:${projectId}`, async () => {
-      await api.unregisterProject(projectId)
-      if (selectedId === projectId) {
-        setSelectedId(null)
-      }
-      await loadProjects(true)
-      setNotice({ kind: 'success', text: `Proyecto «${name}» desvinculado con éxito.` })
-    })
-  }
-
   const handleRefresh = () =>
     detail &&
     action('refresh', async () => {
@@ -575,7 +558,6 @@ export default function App() {
               onPreviewCleanup={previewCleanup}
               onLaunchTool={launchTool}
               onOpenUrl={() => action('url', () => api.openProjectUrl(detail.project.id))}
-              onUnregister={handleUnregister}
               onNotify={(text, kind) => setNotice({ kind, text })}
             />
           ) : viewMode === 'github' ? (
@@ -607,7 +589,6 @@ export default function App() {
               onRegister={() => setModal('register')}
               onQuickRun={handleQuickRun}
               onQuickStop={handleQuickStop}
-              onUnregister={handleUnregister}
               busy={busy}
             />
           )}
@@ -706,7 +687,6 @@ function ProjectWorkspace({
   onPreviewCleanup,
   onLaunchTool,
   onOpenUrl,
-  onUnregister,
   onNotify,
 }: {
   detail: ProjectDetail
@@ -729,7 +709,6 @@ function ProjectWorkspace({
   onPreviewCleanup: () => void
   onLaunchTool: (tool: string) => void
   onOpenUrl: () => void
-  onUnregister: (projectId: string) => void
   onNotify: (text: string, kind: 'success' | 'error') => void
 }) {
   const { project, scan, process, recentCommands } = detail
@@ -767,14 +746,6 @@ function ProjectWorkspace({
               <ArrowUpRight size={15} /> Abrir {project.localUrl}
             </button>
           )}
-          <button
-            className="danger-outline"
-            onClick={() => onUnregister(project.id)}
-            disabled={!!busy}
-            title="Desvincular proyecto de la lista"
-          >
-            <Trash2 size={15} /> Desvincular
-          </button>
         </div>
       </div>
 
@@ -987,7 +958,6 @@ function Dashboard({
   onRegister,
   onQuickRun,
   onQuickStop,
-  onUnregister,
   busy,
 }: {
   projects: Project[]
@@ -999,7 +969,6 @@ function Dashboard({
   onRegister: () => void
   onQuickRun: (project: Project, e: React.MouseEvent) => void
   onQuickStop: (project: Project, e: React.MouseEvent) => void
-  onUnregister: (projectId: string, e: React.MouseEvent) => void
   busy: string | null
 }) {
   return (
@@ -1147,16 +1116,7 @@ function Dashboard({
 
                   <span>{formatBytes(project.diskSizeBytes)}</span>
 
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end' }}>
-                    <button
-                      className="icon-btn"
-                      style={{ height: 26, width: 26, padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4, opacity: 0.6, border: 'none', background: 'transparent', color: 'var(--text-secondary)' }}
-                      title="Desvincular proyecto de la lista"
-                      disabled={busy === `unregister:${project.id}`}
-                      onClick={e => onUnregister(project.id, e)}
-                    >
-                      <Trash2 size={13} />
-                    </button>
+                  <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', opacity: 0.5 }}>
                     <ChevronRight size={18} />
                   </span>
                 </div>
