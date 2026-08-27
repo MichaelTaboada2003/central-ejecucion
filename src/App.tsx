@@ -699,8 +699,18 @@ export default function App() {
             <button className="command-button" onClick={() => setModal('palette')}>
               <Command size={14} /> Comandos <kbd>⌘K</kbd>
             </button>
-            <button className="avatar" aria-label="Ajustes" onClick={() => void refreshSettings()}>
-              DC
+            <button className="avatar" aria-label="Ajustes" onClick={() => void refreshSettings()} style={{ overflow: 'hidden', padding: 0 }}>
+              {githubStatus?.avatarUrl ? (
+                <img
+                  src={githubStatus.avatarUrl}
+                  alt={githubStatus.username || 'Ajustes'}
+                  referrerPolicy="no-referrer"
+                  crossOrigin="anonymous"
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                />
+              ) : (
+                'DC'
+              )}
             </button>
           </div>
         </header>
@@ -2395,13 +2405,44 @@ function SettingsModal({
           </p>
 
           {githubStatus?.authenticated && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '10px 0', padding: 8, background: 'var(--bg-card)', borderRadius: 6 }}>
-              {githubStatus.avatarUrl && (
-                <img src={githubStatus.avatarUrl} alt="Avatar" style={{ width: 32, height: 32, borderRadius: '50%' }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '12px 0', padding: '10px 12px', background: 'var(--bg-surface-0)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
+              {githubStatus.avatarUrl ? (
+                <img
+                  src={githubStatus.avatarUrl}
+                  alt={githubStatus.username || 'Avatar'}
+                  referrerPolicy="no-referrer"
+                  crossOrigin="anonymous"
+                  style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: '50%',
+                    objectFit: 'cover',
+                    border: '1px solid rgba(6, 182, 212, 0.3)',
+                    flexShrink: 0,
+                  }}
+                />
+              ) : (
+                <div
+                  style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: '50%',
+                    background: 'rgba(6, 182, 212, 0.15)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: 'var(--accent-cyan)',
+                    fontWeight: 700,
+                    fontSize: 13,
+                    flexShrink: 0,
+                  }}
+                >
+                  {(githubStatus.username || 'GH').slice(0, 2).toUpperCase()}
+                </div>
               )}
-              <div>
-                <strong style={{ fontSize: 13, display: 'block' }}>{githubStatus.name || githubStatus.username}</strong>
-                <small style={{ color: 'var(--text-tertiary)' }}>{githubStatus.totalRepos} repositorios disponibles · Token: {githubStatus.tokenPreview || 'Guardado'}</small>
+              <div style={{ minWidth: 0 }}>
+                <strong style={{ fontSize: 13, display: 'block', color: 'var(--text-primary)' }}>{githubStatus.name || githubStatus.username}</strong>
+                <small style={{ color: 'var(--text-tertiary)', fontSize: 11 }}>{githubStatus.totalRepos} repositorios · Token: {githubStatus.tokenPreview || 'Guardado'}</small>
               </div>
             </div>
           )}
