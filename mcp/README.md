@@ -216,3 +216,53 @@ Abre el proyecto en una herramienta externa configurada:
 - **Parámetros**:
   - `project_id` *(string, obligatorio)*: ID del proyecto.
   - `tool_id` *(string, obligatorio)*: `finder`, `terminal`, `antigravity` o `codex`.
+
+---
+
+### ☁️ Integración con GitHub (Cloud Workspaces)
+
+#### `dev_command_center_github_status`
+Consulta el estado de autenticación con GitHub, el usuario conectado, nombre, foto de perfil y número total de repositorios.
+- **Parámetros**: Ninguno.
+
+#### `dev_command_center_list_github_repos`
+Lista todos los repositorios remotos del usuario en GitHub y detecta dinámicamente cuáles ya están clonados en el disco local y cuáles están solo en la nube.
+- **Parámetros**: Ninguno.
+
+#### `dev_command_center_clone_github_repo`
+Clona un repositorio de GitHub al disco local y lo registra/escanea automáticamente en Dev Command Center.
+- **Parámetros**:
+  - `repo_name` *(string, obligatorio)*: Nombre del repositorio.
+  - `clone_url` *(string, obligatorio)*: URL de clonación de Git (HTTPS o SSH).
+  - `is_private` *(boolean, obligatorio)*: Si el repositorio es privado.
+  - `target_path` *(string, opcional)*: Ruta destino personalizada. Si se omite, usa la ruta por defecto configurada.
+
+#### `dev_command_center_safe_offload_project`
+Archiva un proyecto de forma segura: verifica que no existan cambios locales sin commitear ni commits sin pushear a GitHub, detiene sus procesos, elimina la carpeta local y lo desregistra para liberar espacio en disco.
+- **Parámetros**:
+  - `project_id` *(string, obligatorio)*: UUID del proyecto.
+  - `force` *(boolean, opcional)*: Forzar eliminación incluso con cambios pendientes (por defecto `false`).
+
+---
+
+### ⚙️ Ajustes y Configuración de la App
+
+#### `dev_command_center_get_settings`
+Obtiene toda la configuración actual de la aplicación: herramientas IDE configuradas, estado de conexión de GitHub y la carpeta de clonación por defecto.
+- **Parámetros**: Ninguno.
+
+#### `dev_command_center_set_github_token`
+Guarda y verifica un Personal Access Token (PAT) de GitHub en la base de datos local SQLite.
+- **Parámetros**:
+  - `token` *(string, obligatorio)*: Token de acceso personal (`ghp_...` o `github_pat_...`).
+
+#### `dev_command_center_set_default_clone_dir`
+Establece la ruta del directorio base predeterminado donde se clonarán los proyectos de GitHub.
+- **Parámetros**:
+  - `path` *(string, obligatorio)*: Ruta absoluta de la carpeta base (ej. `/Users/usuario/Projects`).
+
+#### `dev_command_center_save_ide_settings`
+Configura los ejecutables y comandos de herramientas externas (Antigravity IDE, Codex, VS Code, etc.).
+- **Parámetros**:
+  - `tools` *(array de objetos, obligatorio)*: Lista de configuraciones con `id`, `label`, `command` y `available`.
+

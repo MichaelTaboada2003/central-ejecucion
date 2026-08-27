@@ -130,6 +130,32 @@ pub struct SafeOffloadMcpRequest {
     pub force: Option<bool>,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SetGitHubTokenMcpRequest {
+    #[schemars(description = "GitHub Personal Access Token (classic or fine-grained)")]
+    pub token: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SetDefaultCloneDirMcpRequest {
+    #[schemars(description = "Base absolute directory path where projects will be cloned by default")]
+    pub path: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct IdeConfigMcp {
+    pub id: String,
+    pub label: String,
+    pub command: Option<String>,
+    pub available: bool,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SaveIdeSettingsMcpRequest {
+    #[schemars(description = "List of IDE and editor tool configurations")]
+    pub tools: Vec<IdeConfigMcp>,
+}
+
 #[derive(Debug, Serialize)]
 struct CommandPlan<'a> {
     project: &'a Project,
@@ -594,6 +620,74 @@ impl DevCommandCenterMcp {
                 "project_name": project.name,
                 "message": "Proyecto archivado y carpeta local liberada de forma segura."
             }))
+        })
+    }
+
+    #[tool(description = "Get all application settings, including IDE tools, GitHub integration status, and default clone directory.")]
+    fn dev_command_center_get_settings(&self) -> Result<String, String> {
+        self.with_state(|state| {
+            let ide_settings = state.storage.ide_settings().ok();
+            let storage_token = state.storage.get_setting("github_token").ok().flatten();
+            let token = crate::github::GitHubService::resolve_token(None, storage_token);
+            let github_status = crate::github::GitHubService::get_account_status(token.as_deref()).ok();
+            let default_clone_dir = state.storage.get_setting("default_clone_dir").ok().flatten()
+                .unwrap_or_else(|| {
+                    let local_projects = state.storage.list_projects().unwrap_or_default();
+                    crate::github::GitHubService::resolve_default_clone_destination("", &local_projects)
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_else(|_| "/workspace".to_string())
+                });
+
+            as_json(serde_json::json!({
+                "ide_settings": ide_settings,
+                "github_status": github_status,
+                "default_clone_dir": default_clone_dir
+            }))
+        })
+    }
+
+    #[tool(description = "Save and verify a GitHub Personal Access Token in the local SQLite settings.")]
+    fn dev_command_center_set_github_token(&self, Parameters(request): Parameters<SetGitHubTokenMcpRequest>) -> Result<String, String> {
+        self.with_state(|state| {
+            let token = request.token.trim();
+            if token.is_empty() {
+                return Err("El token de GitHub no puede estar vacío.".into());
+            }
+            let status = crate::github::GitHubService::get_account_status(Some(token))?;
+            state.storage.set_setting("github_token", token)?;
+            as_json(status)
+        })
+    }
+
+    #[tool(description = "Set the default workspace base directory for cloning GitHub repositories.")]
+    fn dev_command_center_set_default_clone_dir(&self, Parameters(request): Parameters<SetDefaultCloneDirMcpRequest>) -> Result<String, String> {
+        self.with_state(|state| {
+            let trimmed = request.path.trim();
+            if trimmed.is_empty() {
+                return Err("La ruta no puede estar vacía.".into());
+            }
+            let p = Path::new(trimmed);
+            if !p.exists() {
+                std::fs::create_dir_all(p).map_err(|e| format!("No se pudo crear la carpeta: {e}"))?;
+            }
+            state.storage.set_setting("default_clone_dir", trimmed)?;
+            as_json(serde_json::json!({ "default_clone_dir": trimmed, "updated": true }))
+        })
+    }
+
+    #[tool(description = "Configure and validate external IDE and terminal launcher commands in Dev Command Center.")]
+    fn dev_command_center_save_ide_settings(&self, Parameters(request): Parameters<SaveIdeSettingsMcpRequest>) -> Result<String, String> {
+        self.with_state(|state| {
+            let tools = request.tools.into_iter().map(|t| crate::domain::IdeConfig {
+                id: t.id,
+                label: t.label,
+                command: t.command,
+                available: t.available,
+            }).collect();
+            let settings = crate::domain::IdeSettings { tools };
+            state.storage.save_ide_settings(&settings)?;
+            let updated = state.storage.ide_settings()?;
+            as_json(updated)
         })
     }
 }
