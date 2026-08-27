@@ -586,7 +586,7 @@ export default function App() {
 
         <div className="sidebar-footer">
           <button className="nav-item" onClick={() => void refreshSettings()}>
-            <Settings2 size={16} /> Ajustes y Token
+            <Settings2 size={16} /> Ajustes
           </button>
           <div className="local-first-card">
             <CloudOff size={16} />
@@ -2736,7 +2736,7 @@ function GitHubHubView({
             <RefreshCw size={15} className={loading ? 'spin' : ''} /> {loading ? 'Sincronizando…' : 'Actualizar Repos'}
           </button>
           <button className="primary" onClick={onOpenSettings}>
-            <Settings2 size={16} /> {status?.authenticated ? 'Ajustes y Token' : 'Conectar GitHub'}
+            <Settings2 size={16} /> {status?.authenticated ? 'Ajustes' : 'Conectar GitHub'}
           </button>
         </div>
       </div>
