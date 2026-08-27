@@ -2705,6 +2705,39 @@ code, kbd, pre, .mono {
   color: var(--text-primary);
 }
 
+.table-action-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface-2);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.table-action-icon-btn:hover {
+  background: var(--bg-surface-3);
+  color: var(--text-primary);
+  border-color: var(--border-medium);
+  transform: translateY(-1px);
+}
+
+.table-action-icon-btn.open:hover {
+  background: var(--accent-primary-subtle);
+  color: var(--accent-primary);
+  border-color: var(--accent-primary-border);
+}
+
+.table-action-icon-btn.danger:hover {
+  background: var(--accent-danger-subtle);
+  color: var(--accent-danger);
+  border-color: var(--accent-danger-border);
+}
+
 /* ==========================================================================
    RESPONSIVE MEDIA QUERIES
    ========================================================================== */

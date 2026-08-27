@@ -2655,60 +2655,46 @@ function GitHubHubView({
                       {repo.isCloned ? (
                         <>
                           <button
-                            className="secondary"
+                            className="table-action-icon-btn open"
                             onClick={e => {
                               e.stopPropagation()
                               if (repo.localProjectId) onOpenLocal(repo.localProjectId)
                             }}
-                            style={{ height: 28, fontSize: 11, padding: '0 10px', borderRadius: 4 }}
+                            title="Abrir en Panel Local"
                           >
-                            Abrir en Panel
+                            <FolderOpen size={15} />
                           </button>
                           <button
-                            className="danger-outline"
+                            className="table-action-icon-btn danger"
                             onClick={e => {
                               e.stopPropagation()
                               onSafeOffload(repo)
                             }}
-                            style={{ height: 28, fontSize: 11, padding: '0 10px', borderRadius: 4 }}
-                            title="Liberar espacio en disco eliminando la copia local de forma segura"
+                            title="Archivar en la nube y liberar espacio de disco (elimina copia local)"
                           >
-                            Archivar
+                            <Trash2 size={15} />
                           </button>
                         </>
                       ) : (
-                        <>
-                          <button
-                            className="primary"
-                            onClick={e => {
-                              e.stopPropagation()
-                              onClone(repo)
-                            }}
-                            disabled={isCloning || !!busy}
-                            style={{ height: 28, fontSize: 11, padding: '0 12px', borderRadius: 4 }}
-                          >
-                            {isCloning ? (
-                              <>
-                                <LoaderCircle size={12} className="spin" /> Clonando…
-                              </>
-                            ) : (
-                              <>
-                                <DownloadCloud size={12} /> Clonar
-                              </>
-                            )}
-                          </button>
-                          <button
-                            className="icon-btn"
-                            style={{ height: 28, width: 28, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4, opacity: 0.7, border: 'none', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer' }}
-                            title={`Abrir ${repo.fullName} en GitHub`}
-                            onClick={e => {
-                              e.stopPropagation()
-                              void api.openExternalUrl(repo.htmlUrl)
-                            }}
-                          >
-                            <ArrowUpRight size={14} />
-                          </button>
-                        </>
+                        <button
+                          className="primary"
+                          onClick={e => {
+                            e.stopPropagation()
+                            onClone(repo)
+                          }}
+                          disabled={isCloning || !!busy}
+                          style={{ height: 28, fontSize: 11, padding: '0 12px', borderRadius: 4 }}
+                        >
+                          {isCloning ? (
+                            <>
+                              <LoaderCircle size={12} className="spin" /> Clonando…
+                            </>
+                          ) : (
+                            <>
+                              <DownloadCloud size={12} /> Clonar
+                            </>
+                          )}
+                        </button>
                       )}
                     </span>
                   </div>
@@ -2784,54 +2770,47 @@ function GitHubHubView({
                           </div>
                           <div style={{ display: 'flex', gap: 6 }}>
                             <button
-                              className="secondary"
+                              className="table-action-icon-btn open"
                               onClick={e => {
                                 e.stopPropagation()
                                 if (repo.localProjectId) onOpenLocal(repo.localProjectId)
                               }}
-                              style={{ height: 28, fontSize: 12, padding: '0 10px' }}
+                              title="Abrir en Panel Local"
                             >
-                              Abrir en Panel
+                              <FolderOpen size={15} />
                             </button>
                             <button
-                              className="danger-outline"
+                              className="table-action-icon-btn danger"
                               onClick={e => {
                                 e.stopPropagation()
                                 onSafeOffload(repo)
                               }}
-                              style={{ height: 28, fontSize: 12, padding: '0 10px' }}
-                              title="Liberar espacio en disco eliminando la copia local de forma segura"
+                              title="Archivar en la nube y liberar espacio de disco"
                             >
-                              Archivar a Nube
+                              <Trash2 size={15} />
                             </button>
                           </div>
                         </>
                       ) : (
-                        <>
-                          <div className="cloud-badge">
-                            <Cloud size={13} color="var(--text-tertiary)" />
-                            <span>Solo en Nube (0 MB)</span>
-                          </div>
-                          <button
-                            className="primary"
-                            onClick={e => {
-                              e.stopPropagation()
-                              onClone(repo)
-                            }}
-                            disabled={isCloning || !!busy}
-                            style={{ height: 28, fontSize: 12, padding: '0 12px' }}
-                          >
-                            {isCloning ? (
-                              <>
-                                <LoaderCircle size={13} className="spin" /> Clonando…
-                              </>
-                            ) : (
-                              <>
-                                <DownloadCloud size={13} /> Clonar
-                              </>
-                            )}
-                          </button>
-                        </>
+                        <button
+                          className="primary"
+                          onClick={e => {
+                            e.stopPropagation()
+                            onClone(repo)
+                          }}
+                          disabled={isCloning || !!busy}
+                          style={{ width: '100%', height: 32, fontSize: 12 }}
+                        >
+                          {isCloning ? (
+                            <>
+                              <LoaderCircle size={13} className="spin" /> Clonando repositorio…
+                            </>
+                          ) : (
+                            <>
+                              <DownloadCloud size={13} /> Clonar
+                            </>
+                          )}
+                        </button>
                       )}
                     </div>
                   </div>
