@@ -518,7 +518,7 @@ export default function App() {
               setViewMode('github')
             }}
           >
-            <GitHubLogo size={16} /> GitHub Cloud Hub
+            <GitHubLogo size={16} /> GitHub
             {githubStatus?.totalRepos ? (
               <span className="badge-count" style={{ marginLeft: 'auto', fontSize: 11, background: 'var(--bg-surface-2)', padding: '2px 7px', borderRadius: 10, color: 'var(--accent-cyan)' }}>
                 {githubStatus.totalRepos}
@@ -2402,17 +2402,20 @@ function GitHubHubView({
   onOpenSettings: () => void
   busy: string | null
 }) {
-  const [filter, setFilter] = useState<'all' | 'cloud' | 'local' | 'public' | 'private'>('all')
+  const [filter, setFilter] = useState<'all' | 'owner' | 'cloud' | 'local' | 'public' | 'private'>('all')
   const [query, setQuery] = useState('')
   const [layoutMode, setLayoutMode] = useState<'table' | 'grid'>('table')
 
+  const ownerPrefix = (status?.username || 'MichaelTaboada2003').toLowerCase() + '/'
+
   const stats = useMemo(() => {
     const total = repos.length
+    const owned = repos.filter(r => r.fullName.toLowerCase().startsWith(ownerPrefix)).length
     const cloned = repos.filter(r => r.isCloned).length
     const cloudOnly = total - cloned
     const totalStars = repos.reduce((sum, r) => sum + r.stars, 0)
-    return { total, cloned, cloudOnly, totalStars }
-  }, [repos])
+    return { total, owned, cloned, cloudOnly, totalStars }
+  }, [repos, ownerPrefix])
 
   const filteredRepos = useMemo(() => {
     return repos.filter(r => {
@@ -2421,20 +2424,21 @@ function GitHubHubView({
         .includes(query.toLowerCase())
       if (!matchQuery) return false
 
+      if (filter === 'owner') return r.fullName.toLowerCase().startsWith(ownerPrefix)
       if (filter === 'cloud') return !r.isCloned
       if (filter === 'local') return r.isCloned
       if (filter === 'public') return !r.isPrivate
       if (filter === 'private') return r.isPrivate
       return true
     })
-  }, [repos, filter, query])
+  }, [repos, filter, query, ownerPrefix])
 
   return (
     <div className="github-hub-layout">
       <div className="dashboard-title">
         <div>
           <p className="eyebrow">WORKSPACE EN LA NUBE</p>
-          <h1>GitHub Cloud Hub</h1>
+          <h1>GitHub</h1>
           <p>
             Explora tus repositorios remotos, clónalos bajo demanda con un clic y libéralos de tu disco de forma segura cuando termines de trabajar.
           </p>
@@ -2497,10 +2501,12 @@ function GitHubHubView({
               />
             </div>
             <div className="filter-group">
-              {(['all', 'cloud', 'local', 'public', 'private'] as const).map(f => {
+              {(['all', 'owner', 'cloud', 'local', 'public', 'private'] as const).map(f => {
                 const label =
                   f === 'all'
                     ? `Todos (${stats.total})`
+                    : f === 'owner'
+                    ? `Propios (${stats.owned})`
                     : f === 'cloud'
                     ? `Solo Nube (${stats.cloudOnly})`
                     : f === 'local'
