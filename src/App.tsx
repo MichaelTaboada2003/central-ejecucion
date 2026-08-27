@@ -1,9 +1,9 @@
 import { open } from '@tauri-apps/plugin-dialog'
 import { listen } from '@tauri-apps/api/event'
 import {
-  AlertTriangle, AppWindow, ArrowLeft, ArrowUpRight, Bot, Box, Check,
+  AlertOctagon, AlertTriangle, AppWindow, ArrowLeft, ArrowUpRight, Bot, Box, Check,
   ChevronRight, CircleStop, Cloud, CloudOff, Command, Copy, Database,
-  DownloadCloud, FileCode2, FolderOpen, GitFork, Globe, HardDrive, Layers,
+  DownloadCloud, FileCode2, Folder, FolderOpen, GitFork, Globe, HardDrive, Layers,
   LayoutDashboard, LayoutGrid, List, LoaderCircle, Lock, PackageOpen, Play, Plus, Radio,
   RefreshCw, RotateCcw, Search, Settings2, ShieldCheck, SquareTerminal,
   Star, Terminal, Trash2, Wrench, X,
@@ -198,6 +198,13 @@ export default function App() {
     return () => window.removeEventListener('dev-command-error', handler)
   }, [])
 
+  // El aviso no se cerraba solo y tapaba la interfaz hasta que se pulsaba la X.
+  useEffect(() => {
+    if (!notice) return
+    const timer = window.setTimeout(() => setNotice(null), notice.kind === 'error' ? 9000 : 5000)
+    return () => window.clearTimeout(timer)
+  }, [notice])
+
   useEffect(() => {
     detailSignature.current = ''
     if (selectedId) {
@@ -294,23 +301,31 @@ export default function App() {
     }
   }, [loadProjects, loadDetail])
 
-  const visibleProjects = useMemo(() => {
+  // Los contadores se calculan sobre el resultado de la búsqueda pero antes de
+  // aplicar el filtro de estado: si no, al elegir «En ejecución» el contador de
+  // «Todos» pasaba a mostrar solo los proyectos en ejecución.
+  const searchedProjects = useMemo(() => {
     const needle = filter.trim().toLowerCase()
+    if (!needle) return projects
     return projects.filter(project => {
-      if (statusFilter !== 'all' && project.status !== statusFilter) return false
-      if (!needle) return true
       const haystack = `${project.name} ${project.path} ${project.projectType} ${project.frameworks.join(' ')} ${project.tags.join(' ')}`.toLowerCase()
       return haystack.includes(needle)
     })
-  }, [filter, projects, statusFilter])
+  }, [filter, projects])
+
+  const visibleProjects = useMemo(
+    () => (statusFilter === 'all' ? searchedProjects : searchedProjects.filter(project => project.status === statusFilter)),
+    [searchedProjects, statusFilter]
+  )
 
   const stats = useMemo(
     () => ({
-      running: projects.filter(project => project.status === 'running').length,
-      stopped: projects.filter(project => project.status === 'stopped').length,
-      error: projects.filter(project => project.status === 'error').length,
+      total: searchedProjects.length,
+      running: searchedProjects.filter(project => project.status === 'running').length,
+      stopped: searchedProjects.filter(project => project.status === 'stopped').length,
+      error: searchedProjects.filter(project => project.status === 'error').length,
     }),
-    [projects]
+    [searchedProjects]
   )
 
   const action = async (name: string, operation: () => Promise<unknown>) => {
@@ -337,10 +352,14 @@ export default function App() {
         action: actionName,
         script,
       })
+      // `runProject` solo devuelve el proceso recién lanzado: la instalación aún
+      // está corriendo. Anunciarla como terminada llevaba a intentar arrancar el
+      // servidor con las dependencias a medio instalar.
       if (actionName === 'install') {
-        await api.refreshProject(detail.project.id)
-        await loadDetail(detail.project.id)
-        setNotice({ kind: 'success', text: 'Dependencias instaladas con éxito. Ya puedes iniciar el servidor.' })
+        setNotice({
+          kind: 'info',
+          text: 'Instalación iniciada. Sigue su avance en «Procesos y logs»; al terminar se habilitará el servidor.',
+        })
       } else {
         setNotice({ kind: 'success', text: `Comando '${actionName}' iniciado con éxito.` })
       }
@@ -446,12 +465,20 @@ export default function App() {
     })
   }
 
+  // El archivado borra la carpeta del disco, así que solo se acepta una
+  // correspondencia inequívoca. Buscar por nombre podía apuntar a otro proyecto
+  // que simplemente se llamara igual que el repositorio.
   const handleSafeOffload = (repo: GitHubRepo) => {
-    const proj = projects.find(p => p.id === repo.localProjectId || p.name.toLowerCase() === repo.name.toLowerCase())
+    const proj = projects.find(
+      p => (repo.localProjectId && p.id === repo.localProjectId) || (repo.localPath && p.canonicalPath === repo.localPath)
+    )
     if (proj) {
       setOffloadCandidate(proj)
     } else {
-      setNotice({ kind: 'error', text: 'No se encontró el proyecto local asociado.' })
+      setNotice({
+        kind: 'error',
+        text: `«${repo.name}» está en el disco pero no registrado en el panel. Regístralo primero para poder archivarlo desde aquí.`,
+      })
     }
   }
 
@@ -468,9 +495,9 @@ export default function App() {
     })
   }
 
-  const handleDeleteProject = (candidate: Project, deleteFiles: boolean) => {
+  const handleDeleteProject = (candidate: Project) => {
     return action(`delete:${candidate.id}`, async () => {
-      await api.deleteProject(candidate.id, deleteFiles)
+      await api.deleteProject(candidate.id, true)
       setDeleteCandidate(null)
       if (selectedId === candidate.id) {
         setSelectedId(null)
@@ -479,9 +506,7 @@ export default function App() {
       await loadGitHub()
       setNotice({
         kind: 'success',
-        text: deleteFiles
-          ? `Proyecto «${candidate.name}» y sus archivos locales eliminados.`
-          : `Proyecto «${candidate.name}» desregistrado del panel.`,
+        text: `Proyecto «${candidate.name}» y sus archivos locales eliminados de tu computador.`,
       })
     })
   }
@@ -702,8 +727,15 @@ export default function App() {
               loading={loadingGithub}
               onRefresh={loadGitHub}
               onClone={handleCloneRepo}
-              onOpenLocal={id => {
-                setSelectedId(id)
+              onOpenLocal={repo => {
+                if (!repo.localProjectId) {
+                  setNotice({
+                    kind: 'info',
+                    text: `«${repo.name}» ya está en ${repo.localPath ?? 'tu disco'}, pero no está registrado en el panel. Regístralo para gestionarlo desde aquí.`,
+                  })
+                  return
+                }
+                setSelectedId(repo.localProjectId)
                 setViewMode('local')
               }}
               onSafeOffload={handleSafeOffload}
@@ -871,7 +903,7 @@ function ProjectWorkspace({
   onPreviewCleanup: () => void
   onLaunchTool: (tool: string) => void
   onOpenUrl: () => void
-  onNotify: (text: string, kind: 'success' | 'error') => void
+  onNotify: (text: string, kind: 'success' | 'error' | 'info') => void
   onDeleteProject: (project: Project) => void
 }) {
   const { project, scan, process, recentCommands } = detail
@@ -932,17 +964,18 @@ function ProjectWorkspace({
               <span>{project.projectType}</span>
               <span>·</span>
               {gitHubRepo ? (
-                <a
-                  href={gitHubRepo.htmlUrl || '#'}
-                  target="_blank"
-                  rel="noreferrer"
+                // Dentro del webview de Tauri un enlace con `target="_blank"` no
+                // llega al navegador del sistema: hay que delegar en el backend.
+                <button
+                  type="button"
                   className="github-link-pill"
                   title="Abrir repositorio en GitHub"
+                  onClick={() => gitHubRepo.htmlUrl && void api.openExternalUrl(gitHubRepo.htmlUrl)}
                 >
                   <GitHubLogo size={13} color="var(--accent-cyan)" />
                   <span>GitHub: {gitHubRepo.fullName || project.name}</span>
                   <ArrowUpRight size={12} />
-                </a>
+                </button>
               ) : project.tags.includes('github') ? (
                 <span className="github-link-pill" title="Proyecto vinculado a GitHub">
                   <GitHubLogo size={13} color="var(--accent-cyan)" />
@@ -1127,7 +1160,7 @@ function Dashboard({
   busy,
 }: {
   projects: Project[]
-  stats: { running: number; stopped: number; error: number }
+  stats: { total: number; running: number; stopped: number; error: number }
   statusFilter: ProjectStatus | 'all'
   setStatusFilter: (value: ProjectStatus | 'all') => void
   isGitHubConnected: (project: Project) => boolean
@@ -1172,7 +1205,7 @@ function Dashboard({
         />
         <StatCard
           label="Total de proyectos"
-          value={projects.length}
+          value={stats.total}
           status="neutral"
           icon={<Layers size={18} />}
         />
@@ -1192,7 +1225,7 @@ function Dashboard({
             {(['all', 'running', 'stopped', 'error'] as const).map(status => {
               const count =
                 status === 'all'
-                  ? projects.length
+                  ? stats.total
                   : status === 'running'
                   ? stats.running
                   : status === 'stopped'
@@ -1348,7 +1381,7 @@ function SummaryTab({
     action: 'dev' | 'build' | 'test' | 'lint' | 'format' | 'typecheck' | 'install' | 'script',
     script?: string
   ) => Promise<void> | undefined
-  onNotify: (text: string, kind: 'success' | 'error') => void
+  onNotify: (text: string, kind: 'success' | 'error' | 'info') => void
 }) {
   const activeCmd = process?.command || project.devCommand || 'No se detectó un comando de desarrollo'
   return (
@@ -1453,7 +1486,7 @@ function ProcessesTab({
   logs: TerminalEntry[]
   setLogs: React.Dispatch<React.SetStateAction<TerminalEntry[]>>
   process: ProcessInfo | null
-  onNotify: (text: string, kind: 'success' | 'error') => void
+  onNotify: (text: string, kind: 'success' | 'error' | 'info') => void
 }) {
   const [streamFilter, setStreamFilter] = useState<'all' | 'stdout' | 'stderr'>('all')
   const terminalBodyRef = useRef<HTMLDivElement>(null)
@@ -1615,10 +1648,13 @@ function DependenciesTab({
   const prodCount = useMemo(() => dependencies.filter(d => !d.isDev).length, [dependencies])
   const devCount = useMemo(() => dependencies.filter(d => d.isDev).length, [dependencies])
 
+  const copyTimer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(copyTimer.current), [])
   const copyDep = (name: string) => {
     void navigator.clipboard.writeText(name)
     setCopiedDep(name)
-    setTimeout(() => setCopiedDep(null), 1500)
+    window.clearTimeout(copyTimer.current)
+    copyTimer.current = window.setTimeout(() => setCopiedDep(null), 1500)
   }
 
   return (
@@ -1776,10 +1812,14 @@ function DiskTab({
   onPreviewCleanup: () => void
   busy: string | null
 }) {
+  // Si el informe falla, `disk` sigue en null y `busy` vuelve a null: sin este
+  // guardia el efecto se relanzaba en bucle y encadenaba análisis de disco
+  // fallidos indefinidamente.
+  const requested = useRef(false)
   useEffect(() => {
-    if (!disk && !busy) {
-      onLoad()
-    }
+    if (disk || busy || requested.current) return
+    requested.current = true
+    onLoad()
   }, [disk, onLoad, busy])
 
   const colorPalette = ['#10b981', '#06b6d4', '#8b5cf6', '#f59e0b', '#f43f5e', '#ec4899']
@@ -1895,7 +1935,7 @@ function ScriptsTab({
       {scripts.length ? (
         <div className="script-list">
           {scripts.map(script => (
-            <div key={script.name}>
+            <div key={`${script.source}:${script.name}:${script.command}`}>
               <div>
                 <strong>{script.name}</strong>
                 <code>{script.command}</code>
@@ -1927,7 +1967,7 @@ function ConfigurationTab({
 }: {
   project: Project
   scan: ProjectDetail['scan']
-  onNotify: (text: string, kind: 'success' | 'error') => void
+  onNotify: (text: string, kind: 'success' | 'error' | 'info') => void
 }) {
   return (
     <div className="detail-grid">
@@ -2658,11 +2698,14 @@ function Meta({ label, value }: { label: string; value: string }) {
 
 function CopyButton({ value, onCopy }: { value: string; onCopy?: () => void }) {
   const [copied, setCopied] = useState(false)
+  const timer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(timer.current), [])
   const handleCopy = () => {
     void navigator.clipboard.writeText(value)
     setCopied(true)
     onCopy?.()
-    setTimeout(() => setCopied(false), 1500)
+    window.clearTimeout(timer.current)
+    timer.current = window.setTimeout(() => setCopied(false), 1500)
   }
   return (
     <button className="copy-button" aria-label="Copiar comando" onClick={handleCopy}>
@@ -2752,7 +2795,7 @@ function GitHubHubView({
   loading: boolean
   onRefresh: () => void
   onClone: (repo: GitHubRepo) => void
-  onOpenLocal: (projectId: string) => void
+  onOpenLocal: (repo: GitHubRepo) => void
   onSafeOffload: (repo: GitHubRepo) => void
   onOpenSettings: () => void
   busy: string | null
@@ -2999,9 +3042,9 @@ function GitHubHubView({
                             className="table-action-icon-btn open"
                             onClick={e => {
                               e.stopPropagation()
-                              if (repo.localProjectId) onOpenLocal(repo.localProjectId)
+                              onOpenLocal(repo)
                             }}
-                            title="Abrir en Panel Local"
+                            title={repo.localProjectId ? 'Abrir en Panel Local' : 'Está en tu disco pero no registrado en el panel'}
                           >
                             <FolderOpen size={15} />
                           </button>
@@ -3114,9 +3157,9 @@ function GitHubHubView({
                               className="table-action-icon-btn open"
                               onClick={e => {
                                 e.stopPropagation()
-                                if (repo.localProjectId) onOpenLocal(repo.localProjectId)
+                                onOpenLocal(repo)
                               }}
-                              title="Abrir en Panel Local"
+                              title={repo.localProjectId ? 'Abrir en Panel Local' : 'Está en tu disco pero no registrado en el panel'}
                             >
                               <FolderOpen size={15} />
                             </button>
@@ -3243,90 +3286,74 @@ function DeleteProjectModal({
 }: {
   candidate: Project
   onClose: () => void
-  onConfirm: (candidate: Project, deleteFiles: boolean) => void
+  onConfirm: (candidate: Project) => void
   busy: boolean
 }) {
-  const [deleteFiles, setDeleteFiles] = useState(false)
-
   return (
     <Modal title="Eliminar Proyecto" onClose={onClose}>
-      <div className="cleanup-modal">
-        <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
-          <div style={{ padding: 10, background: 'rgba(239, 68, 68, 0.12)', borderRadius: 10, color: 'var(--accent-rose, #ef4444)' }}>
-            <Trash2 size={26} />
+      <div className="delete-modal-container">
+        <div className="delete-hero-section">
+          <div className="delete-hero-icon">
+            <Trash2 size={28} />
           </div>
-          <div>
-            <h3 style={{ margin: '0 0 6px', fontSize: '1.05rem' }}>¿Eliminar «{candidate.name}»?</h3>
-            <p style={{ margin: 0, fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-              Selecciona cómo deseas eliminar este proyecto de <strong>Dev Command Center</strong>:
+          <div className="delete-hero-content">
+            <h3>¿Eliminar «{candidate.name}» de tu computador?</h3>
+            <p>
+              Esta acción eliminará de forma definitiva el proyecto y todos sus archivos locales de tu disco duro.
             </p>
-            <code style={{ display: 'block', marginTop: 8, padding: '6px 10px', background: 'var(--bg-canvas)', borderRadius: 6, fontSize: 12, wordBreak: 'break-all' }}>
+          </div>
+        </div>
+
+        <div className="delete-project-info-card">
+          <div className="delete-info-row">
+            <span className="delete-info-label">
+              <Folder size={14} /> Carpeta
+            </span>
+            <code className="delete-info-path" title={candidate.path}>
               {candidate.path}
             </code>
           </div>
-        </div>
 
-        <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div
-            className={`clone-choice-card ${!deleteFiles ? 'active' : ''}`}
-            onClick={() => setDeleteFiles(false)}
-            style={{ cursor: 'pointer' }}
-          >
-            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-              <input
-                type="radio"
-                name="deleteOption"
-                checked={!deleteFiles}
-                onChange={() => setDeleteFiles(false)}
-                style={{ marginTop: 3 }}
-              />
-              <div>
-                <strong style={{ fontSize: '0.9rem', color: 'var(--text-primary)', display: 'block' }}>
-                  Quitar del Command Center (Conservar archivos)
-                </strong>
-                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.4, display: 'block', marginTop: 2 }}>
-                  Elimina el proyecto de la lista y del registro SQLite local, pero <strong>no borra ningún archivo</strong> de tu disco.
-                </span>
-              </div>
+          <div className="delete-info-metrics">
+            <div className="delete-metric-pill">
+              <Layers size={13} />
+              <span>{candidate.projectType}</span>
             </div>
-          </div>
-
-          <div
-            className={`clone-choice-card ${deleteFiles ? 'active' : ''}`}
-            onClick={() => setDeleteFiles(true)}
-            style={{ cursor: 'pointer', borderColor: deleteFiles ? 'var(--accent-rose, #ef4444)' : undefined }}
-          >
-            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-              <input
-                type="radio"
-                name="deleteOption"
-                checked={deleteFiles}
-                onChange={() => setDeleteFiles(true)}
-                style={{ marginTop: 3 }}
-              />
-              <div>
-                <strong style={{ fontSize: '0.9rem', color: 'var(--accent-rose, #ef4444)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <AlertTriangle size={14} /> Eliminar del panel y borrar carpeta del disco
-                </strong>
-                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.4, display: 'block', marginTop: 2 }}>
-                  Borra permanentemente la carpeta física en tu Mac. <strong style={{ color: 'var(--accent-rose)' }}>Esta acción es irreversible</strong>.
-                </span>
+            {candidate.diskSizeBytes > 0 && (
+              <div className="delete-metric-pill">
+                <HardDrive size={13} />
+                <span>Libera {formatBytes(candidate.diskSizeBytes)}</span>
               </div>
-            </div>
+            )}
+            {candidate.frameworks.map(f => (
+              <span key={f} className="delete-framework-badge">
+                {f}
+              </span>
+            ))}
           </div>
         </div>
 
-        <div className="modal-actions" style={{ marginTop: 22 }}>
+        <div className="delete-warning-callout">
+          <AlertOctagon size={19} className="delete-warning-icon" />
+          <div>
+            <strong>Acción permanente e irreversible</strong>
+            <p>
+              Todos los archivos fuente, dependencias, variables de entorno y archivos locales se borrarán permanentemente del disco.
+            </p>
+          </div>
+        </div>
+
+        <div className="delete-modal-actions">
           <button className="secondary" onClick={onClose} disabled={busy}>
             Cancelar
           </button>
           <button
-            className="danger"
+            className="danger delete-confirm-btn"
             disabled={busy}
-            onClick={() => onConfirm(candidate, deleteFiles)}
+            onClick={() => onConfirm(candidate)}
           >
             {busy ? <LoaderCircle className="spin" size={16} /> : <Trash2 size={16} />}
-            {busy ? 'Eliminando…' : deleteFiles ? 'Borrar permanentemente' : 'Quitar del panel'}
+            {busy ? 'Eliminando del disco…' : 'Eliminar del computador'}
           </button>
         </div>
       </div>
