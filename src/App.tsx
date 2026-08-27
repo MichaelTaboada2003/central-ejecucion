@@ -2673,7 +2673,7 @@ function GitHubHubView({
                               </>
                             ) : (
                               <>
-                                <DownloadCloud size={12} /> Clonar 1-Clic
+                                <DownloadCloud size={12} /> Clonar
                               </>
                             )}
                           </button>
@@ -2807,7 +2807,7 @@ function GitHubHubView({
                               </>
                             ) : (
                               <>
-                                <DownloadCloud size={13} /> Clonar y Registrar
+                                <DownloadCloud size={13} /> Clonar
                               </>
                             )}
                           </button>
