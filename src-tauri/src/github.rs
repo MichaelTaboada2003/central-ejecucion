@@ -53,6 +53,27 @@ impl GitHubService {
         None
     }
 
+    pub fn get_git_remote_url(project_path: &Path) -> Option<String> {
+        let git_config = project_path.join(".git").join("config");
+        if let Ok(content) = std::fs::read_to_string(git_config) {
+            let mut in_remote_origin = false;
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with('[') {
+                    in_remote_origin = trimmed.eq_ignore_ascii_case("[remote \"origin\"]");
+                } else if in_remote_origin && trimmed.starts_with("url") {
+                    if let Some((_, url)) = trimmed.split_once('=') {
+                        let u = url.trim().trim_matches('"').trim_matches('\'').to_string();
+                        if !u.is_empty() {
+                            return Some(u);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
     pub fn get_account_status(token: Option<&str>) -> Result<GitHubAccountStatus, String> {
         let token = match token {
             Some(t) if !t.is_empty() => t,
@@ -132,7 +153,7 @@ impl GitHubService {
             let updated_at = item.get("updated_at").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let default_branch = item.get("default_branch").and_then(|v| v.as_str()).unwrap_or("main").to_string();
 
-            // Match against local projects
+            // Match against local projects (by project name, folder name, or git remote URL)
             let mut is_cloned = false;
             let mut local_project_id = None;
             let mut local_path = None;
@@ -145,7 +166,18 @@ impl GitHubService {
                     .map(|n| n.eq_ignore_ascii_case(&name))
                     .unwrap_or(false);
 
-                if proj_name_match || folder_name_match {
+                let git_remote_match = Self::get_git_remote_url(Path::new(&proj.canonical_path))
+                    .map(|remote| {
+                        let r_lower = remote.to_lowercase();
+                        let fn_lower = full_name.to_lowercase();
+                        let n_lower = name.to_lowercase();
+                        r_lower.contains(&fn_lower)
+                            || r_lower.ends_with(&format!("/{}.git", n_lower))
+                            || r_lower.ends_with(&format!("/{}", n_lower))
+                    })
+                    .unwrap_or(false);
+
+                if proj_name_match || folder_name_match || git_remote_match {
                     is_cloned = true;
                     local_project_id = Some(proj.id.clone());
                     local_path = Some(proj.canonical_path.clone());
