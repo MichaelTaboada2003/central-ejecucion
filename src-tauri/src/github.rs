@@ -106,7 +106,7 @@ impl GitHubService {
             _ => return Err("No se ha configurado un Token de GitHub.".into()),
         };
 
-        let response = ureq::get("https://api.github.com/user/repos?per_page=100&sort=updated")
+        let response = ureq::get("https://api.github.com/user/repos?visibility=all&affiliation=owner,collaborator,organization_member&per_page=100&sort=updated")
             .set("Authorization", &format!("Bearer {token}"))
             .set("User-Agent", "DevCommandCenter/1.0")
             .call()
