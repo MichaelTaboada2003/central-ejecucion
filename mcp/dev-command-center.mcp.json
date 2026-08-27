@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "dev-command-center": {
+      "command": "dev-command-center-mcp",
+      "args": []
+    }
+  }
+}
