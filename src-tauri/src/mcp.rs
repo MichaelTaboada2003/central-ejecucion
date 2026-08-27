@@ -118,7 +118,7 @@ pub struct CloneRepoMcpRequest {
     pub clone_url: String,
     #[schemars(description = "Whether the repository is private")]
     pub is_private: bool,
-    #[schemars(description = "Optional custom destination directory. Defaults to ~/Desktop/Programacion/<repo_name>")]
+    #[schemars(description = "Optional custom destination directory. Defaults to standard project workspace directory.")]
     pub target_path: Option<String>,
 }
 
@@ -562,6 +562,7 @@ impl DevCommandCenterMcp {
     fn dev_command_center_clone_github_repo(&self, Parameters(request): Parameters<CloneRepoMcpRequest>) -> Result<String, String> {
         self.with_state(|state| {
             let storage_token = state.storage.get_setting("github_token")?;
+            let local_projects = state.storage.list_projects()?;
             let token = crate::github::GitHubService::resolve_token(None, storage_token);
             let project = crate::github::GitHubService::clone_and_register(
                 &request.repo_name,
@@ -569,6 +570,7 @@ impl DevCommandCenterMcp {
                 request.is_private,
                 token.as_deref(),
                 request.target_path.as_deref(),
+                &local_projects,
             )?;
             state.storage.insert_project(&project)?;
             as_json(project)

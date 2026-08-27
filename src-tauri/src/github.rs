@@ -30,16 +30,27 @@ impl GitHubService {
                 return Some(val.trim().to_string());
             }
         }
-        // Fallback: look for .env in current directory or known project path
-        let env_paths = [
-            PathBuf::from(".env"),
-            PathBuf::from("/Users/apple/Desktop/Programacion/central-ejecucion/.env"),
-        ];
-        for env_path in env_paths {
-            if let Ok(content) = std::fs::read_to_string(env_path) {
+        // Fallback: look for .env in current working directory
+        if let Ok(content) = std::fs::read_to_string(".env") {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("token=") || trimmed.starts_with("GITHUB_TOKEN=") || trimmed.starts_with("GH_TOKEN=") {
+                    if let Some((_, val)) = trimmed.split_once('=') {
+                        let token = val.trim().trim_matches('"').trim_matches('\'').to_string();
+                        if !token.is_empty() {
+                            return Some(token);
+                        }
+                    }
+                }
+            }
+        }
+        // Also check app configuration directory for .env
+        if let Some(config_dir) = dirs::config_dir() {
+            let app_env = config_dir.join("com.devcommandcenter.desktop").join(".env");
+            if let Ok(content) = std::fs::read_to_string(app_env) {
                 for line in content.lines() {
                     let trimmed = line.trim();
-                    if trimmed.starts_with("token=") || trimmed.starts_with("GITHUB_TOKEN=") {
+                    if trimmed.starts_with("token=") || trimmed.starts_with("GITHUB_TOKEN=") || trimmed.starts_with("GH_TOKEN=") {
                         if let Some((_, val)) = trimmed.split_once('=') {
                             let token = val.trim().trim_matches('"').trim_matches('\'').to_string();
                             if !token.is_empty() {
@@ -72,6 +83,91 @@ impl GitHubService {
             }
         }
         None
+    }
+
+    pub fn get_workspace_search_roots(local_projects: &[Project]) -> Vec<PathBuf> {
+        let mut roots = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        // 1. Parent directories of all registered projects
+        for proj in local_projects {
+            let proj_path = Path::new(&proj.canonical_path);
+            if let Some(parent) = proj_path.parent() {
+                let parent_buf = parent.to_path_buf();
+                if parent.is_dir() && seen.insert(parent_buf.clone()) {
+                    roots.push(parent_buf);
+                }
+            }
+        }
+
+        // 2. Environment variable override if configured
+        if let Ok(env_root) = std::env::var("DEV_COMMAND_CENTER_WORKSPACE_DIR") {
+            let p = PathBuf::from(env_root);
+            if p.is_dir() && seen.insert(p.clone()) {
+                roots.push(p);
+            }
+        }
+
+        // 3. Common developer folders in user home
+        if let Some(home) = dirs::home_dir() {
+            let candidates = [
+                home.join("Projects"),
+                home.join("Developer"),
+                home.join("workspace"),
+                home.join("Development"),
+                home.join("Desktop"),
+                home.join("Documents"),
+            ];
+            for candidate in &candidates {
+                if candidate.is_dir() && seen.insert(candidate.clone()) {
+                    roots.push(candidate.clone());
+                }
+            }
+        }
+
+        roots
+    }
+
+    pub fn resolve_default_clone_destination(repo_name: &str, local_projects: &[Project]) -> Result<PathBuf, String> {
+        // 1. If user has registered projects, use the most frequent parent directory
+        if !local_projects.is_empty() {
+            let mut parent_counts = std::collections::HashMap::new();
+            for p in local_projects {
+                if let Some(parent) = Path::new(&p.canonical_path).parent() {
+                    if parent.is_dir() {
+                        *parent_counts.entry(parent.to_path_buf()).or_insert(0usize) += 1;
+                    }
+                }
+            }
+            if let Some((best_parent, _)) = parent_counts.into_iter().max_by_key(|(_, count)| *count) {
+                return Ok(best_parent.join(repo_name));
+            }
+        }
+
+        // 2. Check environment variable
+        if let Ok(env_root) = std::env::var("DEV_COMMAND_CENTER_WORKSPACE_DIR") {
+            let p = PathBuf::from(env_root);
+            if p.is_dir() {
+                return Ok(p.join(repo_name));
+            }
+        }
+
+        // 3. Fallback to standard cross-platform user directories
+        let home = dirs::home_dir().ok_or_else(|| "No se pudo determinar el directorio de usuario ($HOME).".to_string())?;
+        let project_dir = home.join("Projects");
+        if project_dir.is_dir() {
+            return Ok(project_dir.join(repo_name));
+        }
+        let dev_dir = home.join("Developer");
+        if dev_dir.is_dir() {
+            return Ok(dev_dir.join(repo_name));
+        }
+        if let Some(docs) = dirs::document_dir() {
+            if docs.is_dir() {
+                return Ok(docs.join(repo_name));
+            }
+        }
+        Ok(home.join(repo_name))
     }
 
     pub fn scan_disk_repos(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<(String, Option<String>, String)>) {
@@ -172,18 +268,12 @@ impl GitHubService {
             .into_json()
             .map_err(|error| format!("Error al decodificar lista de repositorios: {error}"))?;
 
-        // Recursively discover all git repositories on disk across Programacion, Universidad, Zenoex
+        // Recursively discover all git repositories across dynamic workspace roots
+        let search_roots = Self::get_workspace_search_roots(local_projects);
         let mut discovered_disk_repos: Vec<(String, Option<String>, String)> = Vec::new();
-        if let Some(home) = dirs::home_dir() {
-            let roots = [
-                home.join("Desktop").join("Programacion"),
-                home.join("Desktop").join("Universidad"),
-                home.join("Desktop").join("Zenoex"),
-            ];
-            for root in &roots {
-                if root.is_dir() {
-                    Self::scan_disk_repos(root, 1, 4, &mut discovered_disk_repos);
-                }
+        for root in &search_roots {
+            if root.is_dir() {
+                Self::scan_disk_repos(root, 1, 4, &mut discovered_disk_repos);
             }
         }
 
@@ -291,13 +381,11 @@ impl GitHubService {
         _is_private: bool,
         token: Option<&str>,
         target_path: Option<&str>,
+        local_projects: &[Project],
     ) -> Result<Project, String> {
         let destination = match target_path {
             Some(p) if !p.trim().is_empty() => PathBuf::from(p),
-            _ => {
-                let home = dirs::home_dir().ok_or_else(|| "No se pudo determinar el directorio de usuario ($HOME).".to_string())?;
-                home.join("Desktop").join("Programacion").join(repo_name)
-            }
+            _ => Self::resolve_default_clone_destination(repo_name, local_projects)?,
         };
 
         if destination.exists() {

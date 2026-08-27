@@ -475,7 +475,9 @@ fn list_github_repos(custom_token: Option<String>, state: tauri::State<'_, AppSt
 
 #[tauri::command(async)]
 fn clone_github_repo(request: CloneRepoRequest, state: tauri::State<'_, AppState>) -> Result<Project, String> {
-    let storage_token = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_setting("github_token")?;
+    let storage = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?;
+    let storage_token = storage.get_setting("github_token")?;
+    let local_projects = storage.list_projects()?;
     let token = github::GitHubService::resolve_token(None, storage_token);
     let project = github::GitHubService::clone_and_register(
         &request.repo_name,
@@ -483,8 +485,9 @@ fn clone_github_repo(request: CloneRepoRequest, state: tauri::State<'_, AppState
         request.is_private,
         token.as_deref(),
         request.target_path.as_deref(),
+        &local_projects,
     )?;
-    state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.insert_project(&project)?;
+    storage.insert_project(&project)?;
     Ok(project)
 }
 

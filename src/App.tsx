@@ -855,28 +855,21 @@ function ProjectWorkspace({
               <span>·</span>
               {gitHubRepo ? (
                 <a
-                  href={gitHubRepo.htmlUrl || `https://github.com/MichaelTaboada2003/${project.name}`}
+                  href={gitHubRepo.htmlUrl || '#'}
                   target="_blank"
                   rel="noreferrer"
                   className="github-link-pill"
                   title="Abrir repositorio en GitHub"
                 >
                   <GitHubLogo size={13} color="var(--accent-cyan)" />
-                  <span>GitHub: {gitHubRepo.fullName || `MichaelTaboada2003/${project.name}`}</span>
+                  <span>GitHub: {gitHubRepo.fullName || project.name}</span>
                   <ArrowUpRight size={12} />
                 </a>
               ) : project.tags.includes('github') ? (
-                <a
-                  href={`https://github.com/MichaelTaboada2003/${project.name}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="github-link-pill"
-                  title="Abrir repositorio en GitHub"
-                >
+                <span className="github-link-pill" title="Proyecto vinculado a GitHub">
                   <GitHubLogo size={13} color="var(--accent-cyan)" />
                   <span>GitHub</span>
-                  <ArrowUpRight size={12} />
-                </a>
+                </span>
               ) : (
                 <span className="local-only-pill" title="Proyecto almacenado únicamente en este equipo local">
                   <HardDrive size={13} color="var(--text-tertiary)" />
@@ -2420,11 +2413,11 @@ function GitHubHubView({
   const [query, setQuery] = useState('')
   const [layoutMode, setLayoutMode] = useState<'table' | 'grid'>('table')
 
-  const ownerPrefix = (status?.username || 'MichaelTaboada2003').toLowerCase() + '/'
+  const ownerPrefix = status?.username ? `${status.username.toLowerCase()}/` : ''
 
   const stats = useMemo(() => {
     const total = repos.length
-    const owned = repos.filter(r => r.fullName.toLowerCase().startsWith(ownerPrefix)).length
+    const owned = ownerPrefix ? repos.filter(r => r.fullName.toLowerCase().startsWith(ownerPrefix)).length : total
     const cloned = repos.filter(r => r.isCloned).length
     const cloudOnly = total - cloned
     const totalStars = repos.reduce((sum, r) => sum + r.stars, 0)
@@ -2438,7 +2431,7 @@ function GitHubHubView({
         .includes(query.toLowerCase())
       if (!matchQuery) return false
 
-      if (filter === 'owner') return r.fullName.toLowerCase().startsWith(ownerPrefix)
+      if (filter === 'owner') return ownerPrefix ? r.fullName.toLowerCase().startsWith(ownerPrefix) : true
       if (filter === 'cloud') return !r.isCloned
       if (filter === 'local') return r.isCloned
       if (filter === 'public') return !r.isPrivate
@@ -2500,7 +2493,7 @@ function GitHubHubView({
             <h2>Repositorios en la Nube</h2>
             <p>
               {filteredRepos.length
-                ? `${filteredRepos.length} repositorio(s) disponibles en tu cuenta @${status?.username || 'MichaelTaboada2003'}`
+                ? `${filteredRepos.length} repositorio(s) disponibles ${status?.username ? `en tu cuenta @${status.username}` : 'en GitHub'}`
                 : 'No se encontraron repositorios con ese criterio'}
             </p>
           </div>
