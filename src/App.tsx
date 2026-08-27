@@ -501,7 +501,7 @@ export default function App() {
           <Plus size={16} /> Registrar proyecto <kbd>⌘N</kbd>
         </button>
 
-        <nav className="nav-group" aria-label="Navegación principal">
+        <nav className="sidebar-nav">
           <button
             className={viewMode === 'local' && !selectedId ? 'nav-item active' : 'nav-item'}
             onClick={() => {
@@ -510,6 +510,11 @@ export default function App() {
             }}
           >
             <LayoutDashboard size={16} /> Panel Local
+            {projects.length ? (
+              <span className="badge-count" style={{ marginLeft: 'auto', fontSize: 11, background: 'var(--bg-surface-2)', padding: '2px 7px', borderRadius: 10, color: 'var(--accent-primary)' }}>
+                {projects.length}
+              </span>
+            ) : null}
           </button>
           <button
             className={viewMode === 'github' && !selectedId ? 'nav-item active' : 'nav-item'}
@@ -1066,7 +1071,7 @@ function Dashboard({
       <div className="dashboard-title">
         <div>
           <p className="eyebrow">CENTRO DE MANDO</p>
-          <h1>Panel de Control</h1>
+          <h1>Panel Local</h1>
           <p>Supervisa, ejecuta y optimiza tus entornos locales de desarrollo.</p>
         </div>
         <button className="primary" onClick={onRegister}>
@@ -1104,7 +1109,7 @@ function Dashboard({
       <section className="dashboard-section">
         <div className="section-title">
           <div>
-            <h2>Proyectos Registrados</h2>
+            <h2>Proyectos en tu Mac</h2>
             <p>
               {projects.length
                 ? `${projects.length} proyecto(s) listados en SQLite local`
@@ -1112,15 +1117,25 @@ function Dashboard({
             </p>
           </div>
           <div className="filter-group">
-            {(['all', 'running', 'stopped', 'error'] as const).map(status => (
-              <button
-                className={statusFilter === status ? 'active' : ''}
-                key={status}
-                onClick={() => setStatusFilter(status)}
-              >
-                {status === 'all' ? 'Todos' : statusLabels[status]}
-              </button>
-            ))}
+            {(['all', 'running', 'stopped', 'error'] as const).map(status => {
+              const count =
+                status === 'all'
+                  ? projects.length
+                  : status === 'running'
+                  ? stats.running
+                  : status === 'stopped'
+                  ? stats.stopped
+                  : stats.error
+              return (
+                <button
+                  className={statusFilter === status ? 'active' : ''}
+                  key={status}
+                  onClick={() => setStatusFilter(status)}
+                >
+                  {status === 'all' ? `Todos (${count})` : `${statusLabels[status]} (${count})`}
+                </button>
+              )
+            })}
           </div>
         </div>
 
