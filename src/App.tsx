@@ -123,6 +123,8 @@ export default function App() {
   const [githubRepos, setGithubRepos] = useState<GitHubRepo[]>([])
   const [loadingGithub, setLoadingGithub] = useState(false)
   const [offloadCandidate, setOffloadCandidate] = useState<Project | null>(null)
+  const [cloneCandidate, setCloneCandidate] = useState<GitHubRepo | null>(null)
+  const [defaultCloneDir, setDefaultCloneDir] = useState<string>('')
   const searchRef = useRef<HTMLInputElement>(null)
   const selectedIdRef = useRef<string | null>(null)
   const projectsSignature = useRef('')
@@ -185,6 +187,7 @@ export default function App() {
   useEffect(() => {
     void loadProjects(false)
     void loadGitHub()
+    void api.getDefaultCloneDir().then(dir => setDefaultCloneDir(dir)).catch(() => {})
   }, [loadProjects, loadGitHub])
 
   useEffect(() => {
@@ -395,8 +398,12 @@ export default function App() {
     detail && action(`tool:${tool}`, () => api.launchTool(detail.project.id, tool))
 
   const refreshSettings = async () => {
-    const settings = await api.getIdeSettings()
+    const [settings, cloneDir] = await Promise.all([
+      api.getIdeSettings(),
+      api.getDefaultCloneDir().catch(() => ''),
+    ])
     setIdeSettings(settings)
+    setDefaultCloneDir(cloneDir)
     setModal('settings')
   }
 
@@ -410,17 +417,31 @@ export default function App() {
   }
 
   const handleCloneRepo = (repo: GitHubRepo) => {
+    setCloneCandidate(repo)
+  }
+
+  const handleConfirmClone = async (repo: GitHubRepo, targetPath: string, makeDefault: boolean) => {
     return action(`clone:${repo.name}`, async () => {
+      if (makeDefault) {
+        const lastSlash = targetPath.lastIndexOf('/')
+        const parentDir = lastSlash > 0 ? targetPath.substring(0, lastSlash) : targetPath
+        if (parentDir) {
+          const saved = await api.setDefaultCloneDir(parentDir)
+          setDefaultCloneDir(saved)
+        }
+      }
       const project = await api.cloneGitHubRepo({
         repoName: repo.name,
         cloneUrl: repo.cloneUrl,
         isPrivate: repo.isPrivate,
+        targetPath,
       })
+      setCloneCandidate(null)
       await loadProjects(true)
       await loadGitHub()
       setSelectedId(project.id)
       setViewMode('local')
-      setNotice({ kind: 'success', text: `Repositorio «${repo.name}» clonado y registrado exitosamente.` })
+      setNotice({ kind: 'success', text: `Repositorio «${repo.name}» clonado en «${project.path}» y registrado exitosamente.` })
     })
   }
 
@@ -714,6 +735,16 @@ export default function App() {
         />
       )}
 
+      {cloneCandidate && (
+        <CloneModal
+          repo={cloneCandidate}
+          defaultCloneDir={defaultCloneDir}
+          onClose={() => setCloneCandidate(null)}
+          onConfirmClone={handleConfirmClone}
+          busy={!!busy && busy.startsWith('clone:')}
+        />
+      )}
+
       {modal === 'register' && (
         <RegisterModal
           busy={busy === 'register'}
@@ -726,6 +757,7 @@ export default function App() {
         <SettingsModal
           settings={ideSettings}
           githubStatus={githubStatus}
+          defaultCloneDir={defaultCloneDir}
           onClose={() => setModal(null)}
           onSaveIde={async settings => {
             await action('settings', async () => {
@@ -736,6 +768,11 @@ export default function App() {
             })
           }}
           onSaveGitHubToken={handleSaveGitHubToken}
+          onSaveDefaultCloneDir={async path => {
+            const saved = await api.setDefaultCloneDir(path)
+            setDefaultCloneDir(saved)
+            setNotice({ kind: 'success', text: 'Ruta base de clonación guardada.' })
+          }}
         />
       )}
 
@@ -1970,25 +2007,203 @@ function RegisterModal({
   )
 }
 
+function CloneModal({
+  repo,
+  defaultCloneDir,
+  onClose,
+  onConfirmClone,
+  busy,
+}: {
+  repo: GitHubRepo
+  defaultCloneDir: string
+  onClose: () => void
+  onConfirmClone: (repo: GitHubRepo, targetPath: string, setAsDefault: boolean) => Promise<void>
+  busy: boolean
+}) {
+  const [destinationMode, setDestinationMode] = useState<'default' | 'custom'>('default')
+  const defaultBase = defaultCloneDir.replace(/\/+$/, '') || '/workspace'
+  const defaultTarget = `${defaultBase}/${repo.name}`
+  const [customPath, setCustomPath] = useState(defaultTarget)
+  const [setAsDefault, setSetAsDefault] = useState(false)
+
+  const handleBrowseCustom = async () => {
+    if (isTauri) {
+      try {
+        const result = await open({
+          directory: true,
+          multiple: false,
+          title: `Selecciona carpeta destino para «${repo.name}»`,
+        })
+        if (typeof result === 'string') {
+          const finalPath = `${result.replace(/\/+$/, '')}/${repo.name}`
+          setCustomPath(finalPath)
+          setDestinationMode('custom')
+        }
+      } catch (err) {
+        console.warn('Dialog error:', err)
+      }
+    }
+  }
+
+  const effectivePath = destinationMode === 'default' ? defaultTarget : customPath
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!effectivePath.trim()) return
+    await onConfirmClone(repo, effectivePath.trim(), setAsDefault && destinationMode === 'custom')
+  }
+
+  return (
+    <Modal title="Clonar Repositorio de GitHub" onClose={onClose}>
+      <form onSubmit={handleSubmit} className="form-stack">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12, background: 'var(--bg-surface-2)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
+          <div className="mini-icon" style={{ width: 36, height: 36, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-surface-3)' }}>
+            <GitHubLogo size={20} color="var(--accent-cyan)" />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <strong style={{ fontSize: 14, display: 'block' }}>{repo.fullName}</strong>
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+              {repo.language ? `${repo.language} · ` : ''}{repo.isPrivate ? 'Privado 🔒' : 'Público 🌐'} · {repo.stars} ★
+            </span>
+          </div>
+        </div>
+
+        <div className="clone-destination-selector" style={{ marginTop: 8 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8, display: 'block' }}>
+            SELECCIONA DÓNDE GUARDAR EL PROYECTO
+          </label>
+
+          {/* Option 1: Default Folder */}
+          <div
+            className={`clone-choice-card ${destinationMode === 'default' ? 'active' : ''}`}
+            onClick={() => setDestinationMode('default')}
+            style={{
+              padding: 12,
+              borderRadius: 'var(--radius-sm)',
+              border: destinationMode === 'default' ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
+              background: destinationMode === 'default' ? 'rgba(59, 130, 246, 0.08)' : 'var(--bg-surface-1)',
+              cursor: 'pointer',
+              marginBottom: 8,
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                type="radio"
+                name="destinationMode"
+                checked={destinationMode === 'default'}
+                onChange={() => setDestinationMode('default')}
+              />
+              <strong style={{ fontSize: 13 }}>Ruta predeterminada</strong>
+              <span className="badge-pill" style={{ fontSize: 10, marginLeft: 'auto', background: 'var(--bg-surface-3)', padding: '2px 6px', borderRadius: 4 }}>
+                Ajustes
+              </span>
+            </div>
+            <p style={{ margin: '6px 0 0 24px', fontSize: 12, color: 'var(--text-secondary)', wordBreak: 'break-all', fontFamily: 'var(--font-mono)' }}>
+              {defaultTarget}
+            </p>
+          </div>
+
+          {/* Option 2: Custom Folder */}
+          <div
+            className={`clone-choice-card ${destinationMode === 'custom' ? 'active' : ''}`}
+            onClick={() => setDestinationMode('custom')}
+            style={{
+              padding: 12,
+              borderRadius: 'var(--radius-sm)',
+              border: destinationMode === 'custom' ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
+              background: destinationMode === 'custom' ? 'rgba(59, 130, 246, 0.08)' : 'var(--bg-surface-1)',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <input
+                type="radio"
+                name="destinationMode"
+                checked={destinationMode === 'custom'}
+                onChange={() => setDestinationMode('custom')}
+              />
+              <strong style={{ fontSize: 13 }}>Ruta personalizada</strong>
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, marginLeft: 24 }} onClick={e => e.stopPropagation()}>
+              <input
+                type="text"
+                value={customPath}
+                onChange={e => {
+                  setCustomPath(e.target.value)
+                  setDestinationMode('custom')
+                }}
+                placeholder="/ruta/personalizada/proyecto"
+                style={{ flex: 1, fontSize: 12, fontFamily: 'var(--font-mono)' }}
+              />
+              <button type="button" className="secondary" onClick={handleBrowseCustom} style={{ height: 34, fontSize: 12, padding: '0 12px' }}>
+                <FolderOpen size={14} /> Explorar
+              </button>
+            </div>
+
+            {destinationMode === 'custom' && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, marginLeft: 24, fontSize: 11, color: 'var(--text-secondary)', cursor: 'pointer' }} onClick={e => e.stopPropagation()}>
+                <input
+                  type="checkbox"
+                  checked={setAsDefault}
+                  onChange={e => setSetAsDefault(e.target.checked)}
+                />
+                Guardar y establecer esta carpeta como mi nueva ruta predeterminada
+              </label>
+            )}
+          </div>
+        </div>
+
+        <div className="form-actions" style={{ marginTop: 16 }}>
+          <button type="button" className="secondary" onClick={onClose} disabled={busy}>
+            Cancelar
+          </button>
+          <button type="submit" className="primary" disabled={busy || !effectivePath.trim()}>
+            {busy ? (
+              <>
+                <LoaderCircle size={14} className="spin" /> Clonando…
+              </>
+            ) : (
+              <>
+                <DownloadCloud size={14} /> Clonar en esta ruta
+              </>
+            )}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
 function SettingsModal({
   settings,
   githubStatus,
+  defaultCloneDir,
   onClose,
   onSaveIde,
   onSaveGitHubToken,
+  onSaveDefaultCloneDir,
 }: {
   settings: IdeSettings | null
   githubStatus: GitHubAccountStatus | null
+  defaultCloneDir: string
   onClose: () => void
   onSaveIde: (settings: IdeSettings) => Promise<void>
   onSaveGitHubToken: (token: string) => Promise<void>
+  onSaveDefaultCloneDir: (path: string) => Promise<void>
 }) {
   const [tools, setTools] = useState(settings?.tools || [])
   const [tokenInput, setTokenInput] = useState('')
   const [savingToken, setSavingToken] = useState(false)
   const [tokenMessage, setTokenMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
+  const [cloneDirInput, setCloneDirInput] = useState(defaultCloneDir)
+  const [savingCloneDir, setSavingCloneDir] = useState(false)
+  const [cloneDirMessage, setCloneDirMessage] = useState<string | null>(null)
 
   useEffect(() => setTools(settings?.tools || []), [settings])
+  useEffect(() => setCloneDirInput(defaultCloneDir), [defaultCloneDir])
 
   const handleTokenSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -2009,8 +2224,40 @@ function SettingsModal({
     }
   }
 
+  const handleCloneDirBrowse = async () => {
+    if (isTauri) {
+      try {
+        const result = await open({
+          directory: true,
+          multiple: false,
+          title: 'Selecciona la carpeta base para clonar repositorios',
+        })
+        if (typeof result === 'string') {
+          setCloneDirInput(result)
+        }
+      } catch (err) {
+        console.warn('Dialog error:', err)
+      }
+    }
+  }
+
+  const handleCloneDirSubmit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!cloneDirInput.trim()) return
+    setSavingCloneDir(true)
+    setCloneDirMessage(null)
+    try {
+      await onSaveDefaultCloneDir(cloneDirInput.trim())
+      setCloneDirMessage('Ruta base de clonación actualizada.')
+    } catch (err) {
+      setCloneDirMessage(err instanceof Error ? err.message : 'Error al guardar ruta.')
+    } finally {
+      setSavingCloneDir(false)
+    }
+  }
+
   return (
-    <Modal title="Ajustes de Herramientas y Nube" onClose={onClose}>
+    <Modal title="Configuración de la Aplicación" onClose={onClose}>
       <div className="form-stack">
         {/* GitHub Cloud Connection */}
         <div style={{ padding: 14, background: 'var(--bg-surface-2)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
@@ -2029,7 +2276,7 @@ function SettingsModal({
             )}
           </div>
           <p className="modal-copy" style={{ margin: '4px 0 10px' }}>
-            Accede a tus repositorios remotos y clónalos bajo demanda. Ingresa un Personal Access Token (PAT) de GitHub.
+            Ingresa tu Personal Access Token (PAT) clásico o fine-grained de GitHub para sincronizar repositorios públicos y privados.
           </p>
 
           {githubStatus?.authenticated && (
@@ -2060,6 +2307,40 @@ function SettingsModal({
           {tokenMessage && (
             <p style={{ margin: '8px 0 0', fontSize: 12, color: tokenMessage.kind === 'success' ? 'var(--accent-primary)' : 'var(--accent-rose)' }}>
               {tokenMessage.text}
+            </p>
+          )}
+        </div>
+
+        {/* Default Clone Directory */}
+        <div style={{ padding: 14, background: 'var(--bg-surface-2)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <strong style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14 }}>
+              <FolderOpen size={16} color="var(--accent-primary)" /> Carpeta de Clonación por Defecto
+            </strong>
+          </div>
+          <p className="modal-copy" style={{ margin: '4px 0 10px' }}>
+            Los repositorios que clones desde GitHub se descargarán dentro de este directorio base (ej. <code>~/Projects</code> o tu carpeta favorita).
+          </p>
+
+          <form onSubmit={handleCloneDirSubmit} style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+            <input
+              type="text"
+              value={cloneDirInput}
+              onChange={e => setCloneDirInput(e.target.value)}
+              placeholder="/ruta/a/tus/proyectos"
+              style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 12 }}
+            />
+            <button type="button" className="secondary" onClick={handleCloneDirBrowse}>
+              <FolderOpen size={14} /> Explorar
+            </button>
+            <button className="primary" type="submit" disabled={!cloneDirInput.trim() || savingCloneDir}>
+              {savingCloneDir ? <LoaderCircle size={14} className="spin" /> : <Check size={14} />} Guardar
+            </button>
+          </form>
+
+          {cloneDirMessage && (
+            <p style={{ margin: '8px 0 0', fontSize: 12, color: 'var(--accent-primary)' }}>
+              {cloneDirMessage}
             </p>
           )}
         </div>

@@ -508,6 +508,34 @@ fn safe_offload_project(project_id: String, force: bool, app: tauri::AppHandle, 
     })
 }
 
+#[tauri::command(async)]
+fn get_default_clone_dir(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    let storage = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?;
+    if let Ok(Some(saved)) = storage.get_setting("default_clone_dir") {
+        if !saved.trim().is_empty() {
+            return Ok(saved);
+        }
+    }
+    let local_projects = storage.list_projects().unwrap_or_default();
+    let default_dest = github::GitHubService::resolve_default_clone_destination("", &local_projects)?;
+    Ok(default_dest.to_string_lossy().to_string())
+}
+
+#[tauri::command(async)]
+fn set_default_clone_dir(path: String, state: tauri::State<'_, AppState>) -> Result<String, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("La ruta no puede estar vacía.".to_string());
+    }
+    let p = Path::new(trimmed);
+    if !p.exists() {
+        std::fs::create_dir_all(p).map_err(|e| format!("No se pudo crear la carpeta: {e}"))?;
+    }
+    let storage = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?;
+    storage.set_setting("default_clone_dir", trimmed)?;
+    Ok(trimmed.to_string())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -522,7 +550,8 @@ pub fn run() {
             list_projects, register_project, unregister_project, get_project_detail, refresh_project, run_project, stop_project, restart_project,
             get_disk_report, preview_cleanup, clean_project, get_ide_settings, save_ide_settings, launch_project_tool,
             open_project_url, open_external_url, inspect_project_port,
-            get_github_status, save_github_token, list_github_repos, clone_github_repo, safe_offload_project
+            get_github_status, save_github_token, list_github_repos, clone_github_repo, safe_offload_project,
+            get_default_clone_dir, set_default_clone_dir
         ])
         .run(tauri::generate_context!())
         .expect("error while running Dev Command Center");

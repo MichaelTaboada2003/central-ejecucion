@@ -979,4 +979,14 @@ export const api = {
       message: 'Proyecto archivado y carpeta local liberada de forma segura.',
     }
   },
+
+  getDefaultCloneDir: async (): Promise<string> => {
+    if (isTauri) return invoke<string>('get_default_clone_dir')
+    return '/workspace'
+  },
+
+  setDefaultCloneDir: async (path: string): Promise<string> => {
+    if (isTauri) return invoke<string>('set_default_clone_dir', { path })
+    return path
+  },
 }

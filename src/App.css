@@ -2766,9 +2766,31 @@ code, kbd, pre, .mono {
   }
 }
 
+/* ==========================================================================
+   CLONE DESTINATION MODAL
+   ========================================================================== */
+.clone-choice-card {
+  border-radius: var(--radius-md) !important;
+  border: 1px solid var(--border-subtle) !important;
+  background: var(--bg-surface-1) !important;
+  transition: all 0.15s ease !important;
+}
+
+.clone-choice-card:hover {
+  border-color: var(--border-muted) !important;
+  background: var(--bg-surface-2) !important;
+}
+
+.clone-choice-card.active {
+  border-color: var(--accent-primary) !important;
+  background: rgba(59, 130, 246, 0.08) !important;
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.2);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
 }
+
