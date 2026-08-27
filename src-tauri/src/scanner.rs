@@ -421,6 +421,27 @@ pub fn scan_project(path: &Path) -> Result<ProjectScan, String> {
     scan.frameworks = frameworks.into_iter().collect();
     scan.manifests = manifests;
     scan.lockfile = lockfile;
+
+    if scan.port.is_none() {
+        if scan.frameworks.iter().any(|f| f == "Next.js" || f == "Nuxt" || f == "Remix") {
+            scan.port = Some(3000);
+        } else if scan.frameworks.iter().any(|f| f == "Vite" || f == "Svelte" || f == "SvelteKit") {
+            scan.port = Some(5173);
+        } else if scan.frameworks.iter().any(|f| f == "Astro") {
+            scan.port = Some(4321);
+        } else if scan.frameworks.iter().any(|f| f == "Expo" || f == "React Native") {
+            scan.port = Some(8081);
+        } else if scan.frameworks.iter().any(|f| f == "Angular") {
+            scan.port = Some(4200);
+        } else if scan.frameworks.iter().any(|f| f == "Streamlit") {
+            scan.port = Some(8501);
+        } else if scan.frameworks.iter().any(|f| f == "Django" || f == "FastAPI" || f == "Uvicorn") {
+            scan.port = Some(8000);
+        } else if scan.frameworks.iter().any(|f| f == "Flask") {
+            scan.port = Some(5000);
+        }
+    }
+
     if let Some(port) = scan.port { scan.local_url = Some(format!("http://localhost:{port}")); }
     Ok(scan)
 }
@@ -688,6 +709,10 @@ fn add_node_frameworks(dependencies: &[String], frameworks: &mut BTreeSet<String
         ("fastify", "Fastify"),
         ("express", "Express"),
         ("nestjs", "NestJS"),
+        ("expo", "Expo"),
+        ("react-native", "React Native"),
+        ("remix", "Remix"),
+        ("@sveltejs/kit", "SvelteKit"),
     ] {
         if dependencies.iter().any(|name| name == dependency || name.starts_with(&format!("{dependency}/")) || name.contains(dependency)) {
             frameworks.insert(framework.into());
