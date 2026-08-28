@@ -171,3 +171,38 @@ export interface SafeOffloadResult {
   projectName: string
   message: string
 }
+
+export interface GitStatusInfo {
+  isRepo: boolean
+  currentBranch?: string | null
+  remoteUrl?: string | null
+  remoteName?: string | null
+  branches: string[]
+  remoteBranches: string[]
+  uncommittedChanges: GitFileChange[]
+  aheadCount: number
+  behindCount: number
+  lastCommitMessage?: string | null
+  lastCommitHash?: string | null
+  lastCommitDate?: string | null
+  isClean: boolean
+}
+
+export interface GitFileChange {
+  path: string
+  status: string
+  staged: boolean
+}
+
+export interface GitActionResult {
+  success: boolean
+  message: string
+  output?: string | null
+}
+
+export interface PublishToGitHubRequest {
+  projectId: string
+  repoName: string
+  description?: string | null
+  isPrivate: boolean
+}

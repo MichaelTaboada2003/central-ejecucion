@@ -9,9 +9,10 @@ pub mod scanner;
 pub mod storage;
 
 use crate::domain::{
-    CleanupPreview, CleanupRequest, CloneRepoRequest, GitHubAccountStatus, GitHubRepo,
-    IdeSettings, PortInfo, ProcessInfo, Project, ProjectDetail, ProjectStatus,
-    RegisterProjectRequest, RunProjectRequest, SafeOffloadResult,
+    CleanupPreview, CleanupRequest, CloneRepoRequest, GitActionResult, GitStatusInfo,
+    GitHubAccountStatus, GitHubRepo, IdeSettings, PortInfo, ProcessInfo, Project,
+    ProjectDetail, ProjectStatus, PublishToGitHubRequest, RegisterProjectRequest,
+    RunProjectRequest, SafeOffloadResult,
 };
 use crate::process::ProcessManager;
 use crate::scanner::{canonical_project_path, scan_project};
@@ -630,6 +631,60 @@ async fn pick_folder(title: Option<String>, default_path: Option<String>) -> Res
     Ok(folder.map(|handle| handle.path().to_string_lossy().to_string()))
 }
 
+#[tauri::command(async)]
+fn get_project_git_status(project_id: String, state: tauri::State<'_, AppState>) -> Result<GitStatusInfo, String> {
+    let project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&project_id)?;
+    let storage_token = state.storage.lock().ok().and_then(|s| s.get_setting("github_pat").ok().flatten());
+    let token = github::GitHubService::resolve_token(None, storage_token);
+    let root = trusted_project_root(&project)?;
+    github::GitHubService::get_project_git_status(&root, token.as_deref())
+}
+
+#[tauri::command(async)]
+fn project_git_pull(project_id: String, state: tauri::State<'_, AppState>) -> Result<GitActionResult, String> {
+    let project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&project_id)?;
+    let storage_token = state.storage.lock().ok().and_then(|s| s.get_setting("github_pat").ok().flatten());
+    let token = github::GitHubService::resolve_token(None, storage_token);
+    let root = trusted_project_root(&project)?;
+    github::GitHubService::git_pull(&root, token.as_deref())
+}
+
+#[tauri::command(async)]
+fn project_git_push(project_id: String, state: tauri::State<'_, AppState>) -> Result<GitActionResult, String> {
+    let project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&project_id)?;
+    let storage_token = state.storage.lock().ok().and_then(|s| s.get_setting("github_pat").ok().flatten());
+    let token = github::GitHubService::resolve_token(None, storage_token);
+    let root = trusted_project_root(&project)?;
+    github::GitHubService::git_push(&root, token.as_deref())
+}
+
+#[tauri::command(async)]
+fn project_git_commit_and_push(project_id: String, message: String, state: tauri::State<'_, AppState>) -> Result<GitActionResult, String> {
+    let project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&project_id)?;
+    let storage_token = state.storage.lock().ok().and_then(|s| s.get_setting("github_pat").ok().flatten());
+    let token = github::GitHubService::resolve_token(None, storage_token);
+    let root = trusted_project_root(&project)?;
+    github::GitHubService::git_commit_and_push(&root, &message, token.as_deref())
+}
+
+#[tauri::command(async)]
+fn publish_project_to_github(request: PublishToGitHubRequest, state: tauri::State<'_, AppState>) -> Result<GitActionResult, String> {
+    let mut project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&request.project_id)?;
+    let storage_token = state.storage.lock().ok().and_then(|s| s.get_setting("github_pat").ok().flatten());
+    let token = github::GitHubService::resolve_token(None, storage_token)
+        .ok_or_else(|| "Debes configurar un GitHub Token (PAT) en los Ajustes para publicar proyectos en tu cuenta.".to_string())?;
+    let root = trusted_project_root(&project)?;
+    let result = github::GitHubService::publish_project_to_github(&root, &project.name, request, &token)?;
+
+    // Añadir tag "github" al proyecto si no lo tenía y persistir
+    if !project.tags.contains(&"github".to_string()) {
+        project.tags.push("github".to_string());
+        let _ = state.storage.lock().map(|db| db.refresh_project_metadata(&project));
+    }
+
+    Ok(result)
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -645,7 +700,8 @@ pub fn run() {
             get_disk_report, preview_cleanup, clean_project, get_ide_settings, save_ide_settings, launch_project_tool,
             open_project_url, open_external_url, inspect_project_port,
             get_github_status, save_github_token, list_github_repos, clone_github_repo, safe_offload_project,
-            get_default_clone_dir, set_default_clone_dir, pick_folder
+            get_default_clone_dir, set_default_clone_dir, pick_folder,
+            get_project_git_status, project_git_pull, project_git_push, project_git_commit_and_push, publish_project_to_github
         ])
         .run(tauri::generate_context!())
         .expect("error while running Dev Command Center");

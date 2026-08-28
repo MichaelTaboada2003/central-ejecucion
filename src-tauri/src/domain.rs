@@ -267,3 +267,46 @@ pub struct SafeOffloadResult {
     pub project_name: String,
     pub message: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitStatusInfo {
+    pub is_repo: bool,
+    pub current_branch: Option<String>,
+    pub remote_url: Option<String>,
+    pub remote_name: Option<String>,
+    pub branches: Vec<String>,
+    pub remote_branches: Vec<String>,
+    pub uncommitted_changes: Vec<GitFileChange>,
+    pub ahead_count: usize,
+    pub behind_count: usize,
+    pub last_commit_message: Option<String>,
+    pub last_commit_hash: Option<String>,
+    pub last_commit_date: Option<String>,
+    pub is_clean: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitFileChange {
+    pub path: String,
+    pub status: String,
+    pub staged: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitActionResult {
+    pub success: bool,
+    pub message: String,
+    pub output: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublishToGitHubRequest {
+    pub project_id: String,
+    pub repo_name: String,
+    pub description: Option<String>,
+    pub is_private: bool,
+}

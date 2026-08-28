@@ -3,6 +3,8 @@ import type {
   CleanupPreview,
   CloneRepoRequest,
   DiskReport,
+  GitActionResult,
+  GitStatusInfo,
   GitHubAccountStatus,
   GitHubRepo,
   IdeSettings,
@@ -11,6 +13,7 @@ import type {
   ProcessInfo,
   Project,
   ProjectDetail,
+  PublishToGitHubRequest,
   RunProjectRequest,
   SafeOffloadResult,
 } from './types'
@@ -1038,5 +1041,54 @@ export const api = {
       }
     }
     return null
+  },
+
+  getProjectGitStatus: async (projectId: string): Promise<GitStatusInfo> => {
+    if (isTauri) return invoke<GitStatusInfo>('get_project_git_status', { projectId })
+    const proj = memoryProjects.find(p => p.id === projectId)
+    const isGithub = proj?.tags.includes('github') ?? false
+    return {
+      isRepo: true,
+      currentBranch: 'main',
+      remoteUrl: isGithub ? `https://github.com/MichaelTaboada2003/${proj?.name || 'repo'}.git` : null,
+      remoteName: isGithub ? 'origin' : null,
+      branches: ['main', 'feature/login'],
+      remoteBranches: isGithub ? ['origin/main'] : [],
+      uncommittedChanges: [
+        { path: 'src/App.tsx', status: 'modified', staged: false },
+      ],
+      aheadCount: 1,
+      behindCount: 0,
+      lastCommitMessage: 'feat: add git integration',
+      lastCommitHash: '211df35',
+      lastCommitDate: 'hace 5 minutos',
+      isClean: false,
+    }
+  },
+
+  gitPull: async (projectId: string): Promise<GitActionResult> => {
+    if (isTauri) return invoke<GitActionResult>('project_git_pull', { projectId })
+    return { success: true, message: 'Cambios descargados exitosamente (git pull).' }
+  },
+
+  gitPush: async (projectId: string): Promise<GitActionResult> => {
+    if (isTauri) return invoke<GitActionResult>('project_git_push', { projectId })
+    return { success: true, message: 'Commits subidos a GitHub exitosamente (git push).' }
+  },
+
+  gitCommitAndPush: async (projectId: string, message: string): Promise<GitActionResult> => {
+    if (isTauri) return invoke<GitActionResult>('project_git_commit_and_push', { projectId, message })
+    return { success: true, message: 'Commit creado y subido a GitHub exitosamente.' }
+  },
+
+  publishToGitHub: async (request: PublishToGitHubRequest): Promise<GitActionResult> => {
+    if (isTauri) return invoke<GitActionResult>('publish_project_to_github', { request })
+    const proj = memoryProjects.find(p => p.id === request.projectId)
+    if (proj && !proj.tags.includes('github')) proj.tags.push('github')
+    return {
+      success: true,
+      message: `¡Proyecto publicado con éxito en GitHub!: https://github.com/usuario/${request.repoName}`,
+      output: `https://github.com/usuario/${request.repoName}`,
+    }
   },
 }
