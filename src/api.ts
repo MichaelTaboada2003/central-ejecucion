@@ -756,6 +756,11 @@ export const api = {
     }
   },
 
+  refreshAllProjects: async (): Promise<Project[]> => {
+    if (isTauri) return invoke<Project[]>('refresh_all_projects')
+    return new Promise(res => setTimeout(() => res([...memoryProjects]), 300))
+  },
+
   refreshProject: async (projectId: string): Promise<Project> => {
     if (isTauri) return invoke<Project>('refresh_project', { projectId })
     const proj = memoryProjects.find(p => p.id === projectId) || memoryProjects[0]
@@ -766,6 +771,13 @@ export const api = {
     if (isTauri) return invoke<void>('delete_project', { request: { projectId, deleteFiles } })
     const idx = memoryProjects.findIndex(p => p.id === projectId)
     if (idx !== -1) memoryProjects.splice(idx, 1)
+  },
+
+  togglePinProject: async (projectId: string, isPinned: boolean): Promise<boolean> => {
+    if (isTauri) return invoke<boolean>('toggle_pin_project', { projectId, isPinned })
+    const proj = memoryProjects.find(p => p.id === projectId)
+    if (proj) proj.isPinned = isPinned
+    return isPinned
   },
 
 

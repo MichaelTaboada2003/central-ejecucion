@@ -3,7 +3,7 @@ import {
   AlertOctagon, AlertTriangle, AppWindow, ArrowLeft, ArrowUpRight, Bot, Box, Check,
   ChevronRight, CircleStop, Cloud, CloudOff, Command, Copy, Database,
   DownloadCloud, FileCode2, Folder, FolderOpen, GitFork, Globe, HardDrive, Layers,
-  LayoutDashboard, LayoutGrid, List, LoaderCircle, Lock, PackageOpen, Play, Plus, Radio,
+  LayoutDashboard, LayoutGrid, List, LoaderCircle, Lock, PackageOpen, Pin, Play, Plus, Radio,
   RefreshCw, RotateCcw, Search, Settings2, ShieldCheck, SquareTerminal,
   Star, Terminal, Trash2, Wrench, X,
 } from 'lucide-react'
@@ -65,11 +65,12 @@ const TerminalLine = memo(function TerminalLine({ entry }: { entry: TerminalEntr
   )
 })
 
-const statusLabels: Record<ProjectStatus, string> = {
+const statusLabels: Record<ProjectStatus | 'pinned', string> = {
   running: 'En ejecución',
   stopped: 'Detenido',
   starting: 'Iniciando…',
   error: 'Requiere atención',
+  pinned: 'Fijados',
 }
 
 function GitHubLogo({ size = 16, className = '', color = 'currentColor' }: { size?: number; className?: string; color?: string }) {
@@ -108,7 +109,7 @@ export default function App() {
   const [detail, setDetail] = useState<ProjectDetail | null>(null)
   const [tab, setTab] = useState<Tab>('summary')
   const [filter, setFilter] = useState('')
-  const [statusFilter, setStatusFilter] = useState<ProjectStatus | 'all'>('all')
+  const [statusFilter, setStatusFilter] = useState<ProjectStatus | 'pinned' | 'all'>('all')
   const [modal, setModal] = useState<Modal>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
@@ -313,19 +314,49 @@ export default function App() {
   }, [filter, projects])
 
   const visibleProjects = useMemo(
-    () => (statusFilter === 'all' ? searchedProjects : searchedProjects.filter(project => project.status === statusFilter)),
+    () => {
+      if (statusFilter === 'all') return searchedProjects
+      if (statusFilter === 'pinned') return searchedProjects.filter(project => project.isPinned)
+      return searchedProjects.filter(project => project.status === statusFilter)
+    },
     [searchedProjects, statusFilter]
   )
+
+  const pinnedProjects = useMemo(() => projects.filter(p => p.isPinned), [projects])
+  const otherProjects = useMemo(() => projects.filter(p => !p.isPinned), [projects])
 
   const stats = useMemo(
     () => ({
       total: searchedProjects.length,
+      pinned: searchedProjects.filter(project => project.isPinned).length,
       running: searchedProjects.filter(project => project.status === 'running').length,
       stopped: searchedProjects.filter(project => project.status === 'stopped').length,
       error: searchedProjects.filter(project => project.status === 'error').length,
     }),
     [searchedProjects]
   )
+
+  const handleTogglePin = async (project: Project, e?: React.MouseEvent) => {
+    e?.stopPropagation()
+    const nextState = !project.isPinned
+    setProjects(prev =>
+      prev.map(p => (p.id === project.id ? { ...p, isPinned: nextState } : p))
+    )
+    if (detail && detail.project.id === project.id) {
+      setDetail({ ...detail, project: { ...detail.project, isPinned: nextState } })
+    }
+    try {
+      await api.togglePinProject(project.id, nextState)
+      setNotice({
+        kind: 'success',
+        text: nextState ? `«${project.name}» fijado al inicio.` : `«${project.name}» desfijado.`,
+      })
+      await loadProjects()
+    } catch (error) {
+      showError(error)
+      await loadProjects()
+    }
+  }
 
   const action = async (name: string, operation: () => Promise<unknown>) => {
     setBusy(name)
@@ -608,11 +639,62 @@ export default function App() {
         </nav>
 
         <section className="project-nav">
-          <div className="nav-heading">
-            <span>PROYECTOS</span>
+          {pinnedProjects.length > 0 && (
+            <>
+              <div className="nav-heading" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--accent-amber)' }}>
+                  <Pin size={11} fill="currentColor" /> FIJADOS
+                </span>
+                <span className="badge-count" style={{ fontSize: 10, padding: '1px 6px', background: 'rgba(245, 158, 11, 0.15)', color: 'var(--accent-amber)' }}>
+                  {pinnedProjects.length}
+                </span>
+              </div>
+              <div className="project-list" style={{ marginBottom: 12 }}>
+                {pinnedProjects.map(project => {
+                  const onGithub = isGitHubConnected(project)
+                  return (
+                    <button
+                      className={`project-nav-item ${selectedId === project.id ? 'selected' : ''}`}
+                      key={project.id}
+                      onClick={() => {
+                        setSelectedId(project.id)
+                        setViewMode('local')
+                      }}
+                      title={`${project.name} · ${onGithub ? 'Sincronizado con GitHub' : 'Solo en almacenamiento local'}`}
+                    >
+                      <StatusDot status={project.status} />
+                      <span className="project-nav-name">{project.name}</span>
+                      <button
+                        type="button"
+                        className="sidebar-pin-btn active"
+                        onClick={e => handleTogglePin(project, e)}
+                        title="Desfijar proyecto"
+                      >
+                        <Pin size={12} fill="currentColor" />
+                      </button>
+                      {onGithub ? (
+                        <GitHubLogo size={13} color="var(--accent-cyan)" className="github-indicator-icon" />
+                      ) : (
+                        <HardDrive size={12} color="var(--text-tertiary)" className="local-indicator-icon" />
+                      )}
+                      {project.status === 'error' && <AlertTriangle size={13} color="var(--accent-rose)" />}
+                    </button>
+                  )
+                })}
+              </div>
+            </>
+          )}
+
+          <div className="nav-heading" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span>{pinnedProjects.length > 0 ? 'OTROS PROYECTOS' : 'PROYECTOS'}</span>
+            {otherProjects.length > 0 && (
+              <span className="badge-count" style={{ fontSize: 10, padding: '1px 6px', background: 'var(--bg-surface-2)' }}>
+                {otherProjects.length}
+              </span>
+            )}
           </div>
           <div className="project-list">
-            {projects.map(project => {
+            {otherProjects.map(project => {
               const onGithub = isGitHubConnected(project)
               return (
                 <button
@@ -626,6 +708,14 @@ export default function App() {
                 >
                   <StatusDot status={project.status} />
                   <span className="project-nav-name">{project.name}</span>
+                  <button
+                    type="button"
+                    className="sidebar-pin-btn"
+                    onClick={e => handleTogglePin(project, e)}
+                    title="Fijar proyecto al inicio"
+                  >
+                    <Pin size={12} />
+                  </button>
                   {onGithub ? (
                     <GitHubLogo size={13} color="var(--accent-cyan)" className="github-indicator-icon" />
                   ) : (
@@ -739,6 +829,7 @@ export default function App() {
               onOpenUrl={() => action('url', () => api.openProjectUrl(detail.project.id))}
               onNotify={(text, kind) => setNotice({ kind, text })}
               onDeleteProject={setDeleteCandidate}
+              onTogglePin={handleTogglePin}
             />
           ) : viewMode === 'github' ? (
             <GitHubHubView
@@ -778,6 +869,7 @@ export default function App() {
               onQuickRun={handleQuickRun}
               onQuickStop={handleQuickStop}
               onDeleteProject={setDeleteCandidate}
+              onTogglePin={handleTogglePin}
               busy={busy}
             />
           )}
@@ -903,6 +995,7 @@ function ProjectWorkspace({
   onOpenUrl,
   onNotify,
   onDeleteProject,
+  onTogglePin,
 }: {
   detail: ProjectDetail
   gitHubRepo?: GitHubRepo
@@ -926,6 +1019,7 @@ function ProjectWorkspace({
   onOpenUrl: () => void
   onNotify: (text: string, kind: 'success' | 'error' | 'info') => void
   onDeleteProject: (project: Project) => void
+  onTogglePin: (project: Project) => void
 }) {
   const { project, scan, process, recentCommands } = detail
   const isRunning = project.status === 'running'
@@ -980,7 +1074,18 @@ function ProjectWorkspace({
             <Terminal size={24} />
           </div>
           <div>
-            <h1>{project.name}</h1>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <h1>{project.name}</h1>
+              <button
+                type="button"
+                className={`pin-btn ${project.isPinned ? 'pinned' : ''}`}
+                onClick={() => onTogglePin(project)}
+                title={project.isPinned ? 'Desfijar proyecto' : 'Fijar proyecto al inicio'}
+              >
+                <Pin size={13} fill={project.isPinned ? 'currentColor' : 'none'} />
+                <span>{project.isPinned ? 'Fijado' : 'Fijar'}</span>
+              </button>
+            </div>
             <p style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <span>{project.projectType}</span>
               <span>·</span>
@@ -1153,7 +1258,7 @@ function ProjectWorkspace({
           onNotify={onNotify}
         />
       )}
-      {tab === 'dependencies' && <DependenciesTab scan={scan} onRun={onRun} busy={busy} />}
+{tab === 'dependencies' && <DependenciesTab scan={scan} onRun={onRun} busy={busy} />}
       {tab === 'disk' && (
         <DiskTab disk={disk} onLoad={onDisk} onPreviewCleanup={onPreviewCleanup} busy={busy} />
       )}
@@ -1175,19 +1280,21 @@ function Dashboard({
   onQuickRun,
   onQuickStop,
   onDeleteProject,
+  onTogglePin,
   busy,
 }: {
   projects: Project[]
-  stats: { total: number; running: number; stopped: number; error: number }
+  stats: { total: number; pinned: number; running: number; stopped: number; error: number }
   onRefreshAll: () => void
-  statusFilter: ProjectStatus | 'all'
-  setStatusFilter: (value: ProjectStatus | 'all') => void
+  statusFilter: ProjectStatus | 'pinned' | 'all'
+  setStatusFilter: (value: ProjectStatus | 'pinned' | 'all') => void
   isGitHubConnected: (project: Project) => boolean
   onSelect: (id: string) => void
   onRegister: () => void
   onQuickRun: (project: Project, e: React.MouseEvent) => void
   onQuickStop: (project: Project, e: React.MouseEvent) => void
   onDeleteProject: (project: Project) => void
+  onTogglePin: (project: Project, e?: React.MouseEvent) => void
   busy: string | null
 }) {
   return (
@@ -1203,9 +1310,9 @@ function Dashboard({
             className="secondary"
             onClick={onRefreshAll}
             disabled={!!busy}
-            title="Vuelve a analizar todos los proyectos y actualiza stack, frameworks y comandos"
+            title="Reescanear todos los proyectos del registro"
           >
-            <RefreshCw size={15} className={busy === 'refresh-all' ? 'spin' : ''} /> Reescanear todo
+            <RefreshCw size={15} className={busy === 'refresh-all' ? 'spin' : ''} /> Reescanear
           </button>
           <button className="primary" onClick={onRegister}>
             <Plus size={16} /> Registrar proyecto
@@ -1219,6 +1326,12 @@ function Dashboard({
           value={stats.running}
           status="running"
           icon={<Play size={18} />}
+        />
+        <StatCard
+          label="Fijados"
+          value={stats.pinned}
+          status="neutral"
+          icon={<Pin size={18} color="var(--accent-amber)" />}
         />
         <StatCard
           label="Detenidos"
@@ -1251,10 +1364,12 @@ function Dashboard({
             </p>
           </div>
           <div className="filter-group">
-            {(['all', 'running', 'stopped', 'error'] as const).map(status => {
+            {(['all', 'pinned', 'running', 'stopped', 'error'] as const).map(status => {
               const count =
                 status === 'all'
                   ? stats.total
+                  : status === 'pinned'
+                  ? stats.pinned
                   : status === 'running'
                   ? stats.running
                   : status === 'stopped'
@@ -1298,8 +1413,13 @@ function Dashboard({
                       <Terminal size={17} />
                     </span>
                     <span className="project-info">
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                         <strong>{project.name}</strong>
+                        {project.isPinned && (
+                          <span className="pinned-badge" title="Proyecto fijado">
+                            <Pin size={10} fill="currentColor" /> Fijado
+                          </span>
+                        )}
                         {onGithub ? (
                           <span className="github-tag-badge" title="Proyecto vinculado a GitHub">
                             <GitHubLogo size={11} color="var(--accent-cyan)" /> GitHub
@@ -1356,6 +1476,30 @@ function Dashboard({
                   <span>{formatBytes(project.diskSizeBytes)}</span>
 
                   <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}>
+                    <button
+                      className="icon-button"
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: project.isPinned ? 'var(--accent-amber)' : 'var(--text-tertiary)',
+                        padding: '4px',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        transition: 'color 0.15s ease',
+                      }}
+                      title={project.isPinned ? 'Desfijar proyecto' : 'Fijar proyecto al inicio'}
+                      onClick={e => {
+                        e.stopPropagation()
+                        onTogglePin(project, e)
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.color = 'var(--accent-amber)')}
+                      onMouseLeave={e => (e.currentTarget.style.color = project.isPinned ? 'var(--accent-amber)' : 'var(--text-tertiary)')}
+                    >
+                      <Pin size={15} fill={project.isPinned ? 'currentColor' : 'none'} />
+                    </button>
                     <button
                       className="icon-button"
                       style={{

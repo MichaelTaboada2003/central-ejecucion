@@ -2759,6 +2759,94 @@ button.github-link-pill {
 }
 
 /* ==========================================================================
+   PINNED PROJECTS STYLES
+   ========================================================================== */
+.sidebar-pin-btn {
+  background: transparent;
+  border: none;
+  padding: 3px;
+  border-radius: var(--radius-xs, 4px);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition: all var(--transition-fast);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  margin-right: 2px;
+}
+
+.project-nav-item:hover .sidebar-pin-btn {
+  opacity: 0.65;
+}
+
+.sidebar-pin-btn:hover {
+  opacity: 1 !important;
+  color: var(--accent-amber);
+  transform: scale(1.18);
+}
+
+.sidebar-pin-btn.active {
+  opacity: 1;
+  color: var(--accent-amber);
+}
+
+.pin-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface-2);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.pin-btn:hover {
+  background: var(--bg-surface-3);
+  border-color: var(--accent-amber-border);
+  color: var(--accent-amber);
+  transform: translateY(-1px);
+}
+
+.pin-btn.pinned {
+  background: var(--accent-amber-subtle);
+  border-color: var(--accent-amber-border);
+  color: var(--accent-amber);
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.2);
+}
+
+.pinned-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent-amber);
+  background: var(--accent-amber-subtle);
+  border: 1px solid var(--accent-amber-border);
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+
+.table-action-icon-btn.pin.pinned {
+  color: var(--accent-amber);
+  background: var(--accent-amber-subtle);
+  border-color: var(--accent-amber-border);
+}
+
+.table-action-icon-btn.pin:hover {
+  color: var(--accent-amber);
+  background: var(--accent-amber-subtle);
+  border-color: var(--accent-amber-border);
+}
+
+/* ==========================================================================
    RESPONSIVE MEDIA QUERIES
    ========================================================================== */
 @media (max-width: 1200px) {

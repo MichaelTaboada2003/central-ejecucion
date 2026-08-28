@@ -19,6 +19,7 @@ export interface Project {
   tags: string[]
   createdAt: string
   lastError: string | null
+  isPinned?: boolean
 }
 
 export interface DetectedScript {

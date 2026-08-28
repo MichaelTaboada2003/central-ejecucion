@@ -40,7 +40,8 @@ impl Storage {
               disk_size_bytes INTEGER NOT NULL DEFAULT 0,
               tags_json TEXT NOT NULL DEFAULT '[]',
               created_at TEXT NOT NULL,
-              last_error TEXT
+              last_error TEXT,
+              is_pinned INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS command_history (
               id TEXT PRIMARY KEY,
@@ -59,7 +60,11 @@ impl Storage {
             );
             CREATE INDEX IF NOT EXISTS command_history_project_started_idx ON command_history(project_id, started_at DESC);
             ",
-        ).map_err(|error| format!("No se pudo crear el esquema SQLite: {error}"))
+        ).map_err(|error| format!("No se pudo crear el esquema SQLite: {error}"))?;
+
+        // Compatibilidad con bases de datos ya existentes
+        let _ = self.connection.execute("ALTER TABLE projects ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0", []);
+        Ok(())
     }
 
     fn recover_interrupted_processes(&self) -> Result<(), String> {
@@ -71,7 +76,7 @@ impl Storage {
     }
 
     pub fn list_projects(&self) -> Result<Vec<Project>, String> {
-        let mut statement = self.connection.prepare("SELECT * FROM projects ORDER BY COALESCE(last_used_at, created_at) DESC, name COLLATE NOCASE")
+        let mut statement = self.connection.prepare("SELECT * FROM projects ORDER BY is_pinned DESC, COALESCE(last_used_at, created_at) DESC, name COLLATE NOCASE")
             .map_err(|error| format!("No se pudo consultar proyectos: {error}"))?;
         let rows = statement
             .query_map([], map_project)
@@ -98,6 +103,14 @@ impl Storage {
         Ok(())
     }
 
+    pub fn toggle_project_pin(&self, id: &str, is_pinned: bool) -> Result<bool, String> {
+        self.connection.execute(
+            "UPDATE projects SET is_pinned = ?2 WHERE id = ?1",
+            params![id, if is_pinned { 1 } else { 0 }],
+        ).map_err(|error| format!("No se pudo fijar el proyecto: {error}"))?;
+        Ok(is_pinned)
+    }
+
     pub fn get_project(&self, id: &str) -> Result<Project, String> {
         self.connection.query_row("SELECT * FROM projects WHERE id = ?1", params![id], map_project)
             .map_err(|error| match error {
@@ -108,13 +121,13 @@ impl Storage {
 
     pub fn insert_project(&self, project: &Project) -> Result<(), String> {
         self.connection.execute(
-            "INSERT INTO projects (id, name, path, canonical_path, project_type, frameworks_json, package_manager, dev_command, build_command, test_command, local_url, port, status, last_used_at, disk_size_bytes, tags_json, created_at, last_error)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+            "INSERT INTO projects (id, name, path, canonical_path, project_type, frameworks_json, package_manager, dev_command, build_command, test_command, local_url, port, status, last_used_at, disk_size_bytes, tags_json, created_at, last_error, is_pinned)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             params![
                 project.id, project.name, project.path, project.canonical_path, project.project_type,
                 json(&project.frameworks), project.package_manager, project.dev_command, project.build_command,
                 project.test_command, project.local_url, project.port, project.status.as_str(), project.last_used_at,
-                project.disk_size_bytes, json(&project.tags), project.created_at, project.last_error,
+                project.disk_size_bytes, json(&project.tags), project.created_at, project.last_error, if project.is_pinned { 1 } else { 0 },
             ],
         ).map_err(|error| {
             if error.to_string().contains("UNIQUE") { "Esta carpeta ya está registrada usando su ruta canónica.".into() }
@@ -220,11 +233,13 @@ fn map_project(row: &Row<'_>) -> rusqlite::Result<Project> {
     let frameworks: String = row.get("frameworks_json")?;
     let tags: String = row.get("tags_json")?;
     let disk_size_bytes: i64 = row.get("disk_size_bytes")?;
+    let is_pinned: i64 = row.get("is_pinned").unwrap_or(0);
     Ok(Project {
         id: row.get("id")?, name: row.get("name")?, path: row.get("path")?, canonical_path: row.get("canonical_path")?, project_type: row.get("project_type")?,
         frameworks: serde_json::from_str(&frameworks).unwrap_or_default(), package_manager: row.get("package_manager")?, dev_command: row.get("dev_command")?, build_command: row.get("build_command")?, test_command: row.get("test_command")?, local_url: row.get("local_url")?,
         port: row.get("port")?, status: ProjectStatus::from_db(&row.get::<_, String>("status")?), last_used_at: row.get("last_used_at")?, disk_size_bytes: disk_size_bytes.max(0) as u64,
         tags: serde_json::from_str(&tags).unwrap_or_default(), created_at: row.get("created_at")?, last_error: row.get("last_error")?,
+        is_pinned: is_pinned != 0,
     })
 }
 

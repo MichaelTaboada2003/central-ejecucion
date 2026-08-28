@@ -21,6 +21,8 @@ pub struct Project {
     pub tags: Vec<String>,
     pub created_at: String,
     pub last_error: Option<String>,
+    #[serde(default)]
+    pub is_pinned: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
