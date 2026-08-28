@@ -1,4 +1,5 @@
 import { defineConfig } from "vite";
+/// <reference types="vitest/config" />
 import react from "@vitejs/plugin-react";
 
 // @ts-expect-error process is a nodejs global
@@ -7,6 +8,15 @@ const host = process.env.TAURI_DEV_HOST;
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [react()],
+
+  // Los tests de componentes necesitan un DOM; los de lógica pura no, pero
+  // jsdom es barato y así no hay que mantener dos configuraciones.
+  test: {
+    environment: "jsdom",
+    globals: false,
+    setupFiles: ["./src/test/setup.ts"],
+    restoreMocks: true,
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
