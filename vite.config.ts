@@ -16,7 +16,9 @@ export default defineConfig(async () => ({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
+    // Bind explicitly to IPv4: with `false` Node 17+ binds only to ::1 and the
+    // Tauri CLI (which polls 127.0.0.1:1420) never starts the Rust build.
+    host: host || "127.0.0.1",
     hmr: host
       ? {
           protocol: "ws",

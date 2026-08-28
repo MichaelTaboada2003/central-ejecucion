@@ -3,6 +3,15 @@ use std::fs;
 use std::path::Path;
 use walkdir::WalkDir;
 
+/// Nombres que siempre se pueden volver a generar. Se comparte con el borrado
+/// seguro de proyectos: un fichero ignorado por git que NO esté en esta lista
+/// (un `.env`, unas credenciales, una base de datos local) no está en GitHub y
+/// no se puede recuperar.
+pub const REGENERABLE_NAMES: [&str; 12] = [
+    "node_modules", ".venv", "venv", "dist", "build", ".next", ".astro", "target", ".cache",
+    ".pytest_cache", "__pycache__", ".turbo",
+];
+
 const CLEANABLE_DIRECTORIES: [(&str, &str); 10] = [
     ("node_modules", "Dependencias Node"),
     (".venv", "Entorno virtual Python"),

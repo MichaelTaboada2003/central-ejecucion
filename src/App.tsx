@@ -2612,9 +2612,27 @@ function GitTab({
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [commitMessage, setCommitMessage] = useState('')
+  const [excluded, setExcluded] = useState<Set<string>>(new Set())
   const [publishName, setPublishName] = useState(project.name)
   const [publishDesc, setPublishDesc] = useState('')
   const [publishPrivate, setPublishPrivate] = useState(false)
+
+  const changedPaths = useMemo(
+    () => (gitStatus?.uncommittedChanges ?? []).map(file => file.path),
+    [gitStatus]
+  )
+  // Se guarda lo EXCLUIDO, no lo incluido: así un archivo que aparece después
+  // (porque lo acabas de tocar) entra marcado por defecto, que es lo esperable.
+  const selectedFiles = useMemo(() => changedPaths.filter(path => !excluded.has(path)), [changedPaths, excluded])
+  const allSelected = selectedFiles.length === changedPaths.length && changedPaths.length > 0
+
+  const toggleFile = (path: string) =>
+    setExcluded(prev => {
+      const next = new Set(prev)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
 
   const loadGitStatus = useCallback(async () => {
     try {
@@ -2658,14 +2676,17 @@ function GitTab({
     }
   }
 
-  const handleCommitAndPush = async (e: FormEvent) => {
+  // Commit y push son dos acciones distintas: juntarlas hacía que un fallo de
+  // red diera por fracasado un commit que sí se había hecho.
+  const handleCommit = async (e: FormEvent) => {
     e.preventDefault()
-    if (!commitMessage.trim()) return
+    if (!commitMessage.trim() || !selectedFiles.length) return
     setBusy('commit')
     try {
-      const res = await api.gitCommitAndPush(project.id, commitMessage.trim())
+      const res = await api.gitCommit(project.id, commitMessage.trim(), selectedFiles)
       onNotify(res.message, 'success')
       setCommitMessage('')
+      setExcluded(new Set())
       await loadGitStatus()
     } catch (err: any) {
       onNotify(err?.message || String(err), 'error')
@@ -2772,7 +2793,10 @@ function GitTab({
       <div className="git-status-hero">
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
           <div className="git-branch-pill">
-            <GitFork size={14} /> {gitStatus.currentBranch || 'HEAD'}
+            {/* Sin rama actual el repositorio está en HEAD desacoplado, y decirlo
+                importa: cualquier commit que se haga ahí no pertenece a ninguna
+                rama y es fácil de perder. Antes solo se leía «HEAD». */}
+            <GitFork size={14} /> {gitStatus.currentBranch || 'HEAD desacoplado'}
           </div>
           {gitStatus.aheadCount > 0 && (
             <span className="git-ahead-pill" title="Commits locales pendientes de subir">
@@ -2826,7 +2850,7 @@ function GitTab({
                 type="button"
                 className="primary"
                 onClick={handlePush}
-                disabled={!!busy || (gitStatus.aheadCount === 0 && gitStatus.uncommittedChanges.length === 0)}
+                disabled={!!busy || gitStatus.aheadCount === 0}
                 title="Subir commits a GitHub (git push)"
               >
                 {busy === 'push' ? <LoaderCircle size={14} className="spin" /> : <UploadCloud size={14} />}
@@ -2848,49 +2872,101 @@ function GitTab({
       <div className="git-grid-layout">
         {/* Cambios pendientes & Commit rápido */}
         <div className="git-card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ margin: 0, fontSize: 14 }}>
+          <div className="git-card-head">
+            <h3>
               Cambios pendientes {gitStatus.uncommittedChanges.length ? `(${gitStatus.uncommittedChanges.length})` : ''}
             </h3>
-            {gitStatus.uncommittedChanges.length === 0 && (
-              <span style={{ fontSize: 12, color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: 4 }}>
+            {gitStatus.uncommittedChanges.length === 0 ? (
+              <span className="git-clean-note">
                 <Check size={14} /> Directorio de trabajo limpio
               </span>
+            ) : (
+              <button
+                type="button"
+                className="git-select-all"
+                onClick={() => setExcluded(allSelected ? new Set(changedPaths) : new Set())}
+              >
+                {allSelected ? 'Quitar todos' : 'Seleccionar todos'}
+              </button>
             )}
           </div>
 
           {gitStatus.uncommittedChanges.length > 0 ? (
             <>
+              {/* Cada archivo se puede dejar fuera del commit. */}
               <div className="git-file-list">
-                {gitStatus.uncommittedChanges.map((file, idx) => (
-                  <div key={idx} className="git-file-item">
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={file.path}>
-                      {file.path}
-                    </span>
-                    <span className={`git-status-tag ${file.status}`}>
-                      {file.status === 'modified' ? 'M' : file.status === 'untracked' || file.status === 'added' ? '+' : file.status === 'deleted' ? 'D' : file.status}
-                    </span>
-                  </div>
-                ))}
+                {gitStatus.uncommittedChanges.map(file => {
+                  const included = !excluded.has(file.path)
+                  return (
+                    <label
+                      key={file.path}
+                      className={`git-file-item selectable ${included ? '' : 'excluded'}`}
+                      title={file.path}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={included}
+                        onChange={() => toggleFile(file.path)}
+                        aria-label={`Incluir ${file.path} en el commit`}
+                      />
+                      <span className="git-file-path">{file.path}</span>
+                      <span className={`git-status-tag ${file.status}`}>
+                        {file.status === 'modified' ? 'M' : file.status === 'untracked' || file.status === 'added' ? '+' : file.status === 'deleted' ? 'D' : file.status}
+                      </span>
+                    </label>
+                  )
+                })}
               </div>
 
-              <form onSubmit={handleCommitAndPush} className="git-commit-box">
-                <input
-                  type="text"
-                  placeholder="Mensaje del commit (ej. fix: resolver error de estilos)..."
+              <form onSubmit={handleCommit} className="commit-composer">
+                <div className="commit-composer-head">
+                  <label htmlFor="commit-message">Mensaje del commit</label>
+                  <span
+                    className={`commit-counter ${commitMessage.length > 72 ? 'over' : commitMessage.length > 50 ? 'warn' : ''}`}
+                    title="Se recomienda que el resumen no pase de 50 caracteres, y nunca de 72"
+                  >
+                    {commitMessage.length}/72
+                  </span>
+                </div>
+                <textarea
+                  id="commit-message"
+                  className="commit-input"
+                  rows={2}
+                  spellCheck={false}
+                  placeholder="fix: corregir el cálculo del total en la factura"
                   value={commitMessage}
                   onChange={e => setCommitMessage(e.target.value)}
+                  onKeyDown={e => {
+                    // Enter envía; Mayús+Enter deja escribir un cuerpo largo.
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      void handleCommit(e as unknown as FormEvent)
+                    }
+                  }}
                   required
                 />
-                <button
-                  type="submit"
-                  className="primary"
-                  disabled={busy === 'commit' || !commitMessage.trim()}
-                  style={{ alignSelf: 'flex-start' }}
-                >
-                  {busy === 'commit' ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />}
-                  {gitStatus.remoteUrl ? 'Commit & Push a GitHub' : 'Hacer Commit Local'}
-                </button>
+                <div className="commit-composer-foot">
+                  <span className="commit-selection-note">
+                    {selectedFiles.length === 0
+                      ? 'No has seleccionado ningún archivo'
+                      : `Entran ${selectedFiles.length} de ${changedPaths.length} archivo${changedPaths.length === 1 ? '' : 's'}`}
+                  </span>
+                  <button
+                    type="submit"
+                    className="primary"
+                    disabled={busy === 'commit' || !commitMessage.trim() || selectedFiles.length === 0}
+                  >
+                    {busy === 'commit' ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />}
+                    Hacer commit
+                  </button>
+                </div>
+                {/* El commit es local; subir es el otro botón. */}
+                <p className="commit-composer-hint">
+                  El commit se queda en tu equipo.{' '}
+                  {gitStatus.remoteUrl
+                    ? 'Para publicarlo usa «Push».'
+                    : 'Este proyecto no tiene remoto configurado.'}
+                </p>
               </form>
             </>
           ) : (

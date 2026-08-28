@@ -1069,6 +1069,10 @@ export const api = {
       remoteBranches: isGithub ? ['origin/main'] : [],
       uncommittedChanges: [
         { path: 'src/App.tsx', status: 'modified', staged: false },
+        { path: 'src/App.css', status: 'modified', staged: false },
+        { path: 'src/componentes/NuevoPanel.tsx', status: 'untracked', staged: false },
+        { path: 'notas/borrador temporal.md', status: 'untracked', staged: false },
+        { path: 'src/viejo.ts', status: 'deleted', staged: false },
       ],
       aheadCount: 1,
       behindCount: 0,
@@ -1087,6 +1091,12 @@ export const api = {
   gitPush: async (projectId: string): Promise<GitActionResult> => {
     if (isTauri) return invoke<GitActionResult>('project_git_push', { projectId })
     return { success: true, message: 'Commits subidos a GitHub exitosamente (git push).' }
+  },
+
+  gitCommit: async (projectId: string, message: string, files: string[]): Promise<GitActionResult> => {
+    if (isTauri) return invoke<GitActionResult>('project_git_commit', { projectId, message, files })
+    const cuantos = files.length === 1 ? '1 archivo' : `${files.length} archivos`
+    return { success: true, message: `Commit creado en local con ${cuantos}: 3f8a1c2 ${message}`, output: `3f8a1c2 ${message}` }
   },
 
   gitCommitAndPush: async (projectId: string, message: string): Promise<GitActionResult> => {
