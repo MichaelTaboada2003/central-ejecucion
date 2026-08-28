@@ -486,6 +486,7 @@ impl GitHubService {
             created_at: Utc::now().to_rfc3339(),
             last_error: None,
             is_pinned: false,
+            is_archived: false,
         };
 
         Ok(project)

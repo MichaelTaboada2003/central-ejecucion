@@ -63,7 +63,7 @@ fn register_project(request: RegisterProjectRequest, state: tauri::State<'_, App
         dev_command: scan.dev_command, build_command: scan.build_command, test_command: scan.test_command,
         local_url: scan.local_url, port: scan.port, status: ProjectStatus::Stopped, last_used_at: None,
         disk_size_bytes: report.total_bytes, tags: request.tags.into_iter().map(|tag| tag.trim().to_string()).filter(|tag| !tag.is_empty()).collect(),
-        created_at: Utc::now().to_rfc3339(), last_error: None, is_pinned: false,
+        created_at: Utc::now().to_rfc3339(), last_error: None, is_pinned: false, is_archived: false,
     };
     if is_project_running(&project).is_some() {
         project.status = ProjectStatus::Running;
@@ -188,6 +188,11 @@ fn unregister_project(project_id: String, state: tauri::State<'_, AppState>) -> 
 #[tauri::command(async)]
 fn toggle_pin_project(project_id: String, is_pinned: bool, state: tauri::State<'_, AppState>) -> Result<bool, String> {
     state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.toggle_project_pin(&project_id, is_pinned)
+}
+
+#[tauri::command(async)]
+fn toggle_archive_project(project_id: String, is_archived: bool, state: tauri::State<'_, AppState>) -> Result<bool, String> {
+    state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.toggle_project_archive(&project_id, is_archived)
 }
 
 #[tauri::command(async)]
@@ -636,7 +641,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            list_projects, register_project, unregister_project, delete_project, toggle_pin_project, get_project_detail, refresh_project, refresh_all_projects, run_project, stop_project, restart_project,
+            list_projects, register_project, unregister_project, delete_project, toggle_pin_project, toggle_archive_project, get_project_detail, refresh_project, refresh_all_projects, run_project, stop_project, restart_project,
             get_disk_report, preview_cleanup, clean_project, get_ide_settings, save_ide_settings, launch_project_tool,
             open_project_url, open_external_url, inspect_project_port,
             get_github_status, save_github_token, list_github_repos, clone_github_repo, safe_offload_project,

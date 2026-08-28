@@ -300,10 +300,24 @@ code, kbd, pre, .mono {
   flex: 1;
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
+  gap: 12px;
+  padding-right: 2px;
+}
+
+.project-section {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.project-section.grow {
+  flex-shrink: 1;
+  min-height: 0;
 }
 
 .nav-heading {
-  padding: 0 8px 10px;
+  padding: 0 8px 6px;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -324,12 +338,9 @@ code, kbd, pre, .mono {
 }
 
 .project-list {
-  overflow-y: auto;
-  flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding-right: 2px;
+  gap: 3px;
 }
 
 .project-nav-item {
@@ -2844,6 +2855,70 @@ button.github-link-pill {
   color: var(--accent-amber);
   background: var(--accent-amber-subtle);
   border-color: var(--accent-amber-border);
+}
+
+/* ==========================================================================
+   ARCHIVED PROJECTS STYLES
+   ========================================================================== */
+.archive-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface-2);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.archive-btn:hover {
+  background: var(--bg-surface-3);
+  border-color: var(--accent-indigo-border);
+  color: var(--accent-indigo);
+  transform: translateY(-1px);
+}
+
+.archive-btn.archived {
+  background: var(--accent-indigo-subtle);
+  border-color: var(--accent-indigo-border);
+  color: var(--accent-indigo);
+}
+
+.archived-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent-indigo);
+  background: var(--accent-indigo-subtle);
+  border: 1px solid var(--accent-indigo-border);
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+
+.table-action-icon-btn.archive.archived {
+  color: var(--accent-indigo);
+  background: var(--accent-indigo-subtle);
+  border-color: var(--accent-indigo-border);
+}
+
+.table-action-icon-btn.archive:hover {
+  color: var(--accent-indigo);
+  background: var(--accent-indigo-subtle);
+  border-color: var(--accent-indigo-border);
+}
+
+.project-nav-item.archived {
+  opacity: 0.65;
+}
+
+.project-nav-item.archived:hover {
+  opacity: 1;
 }
 
 /* ==========================================================================

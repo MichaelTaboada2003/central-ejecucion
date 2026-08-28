@@ -20,6 +20,7 @@ export interface Project {
   createdAt: string
   lastError: string | null
   isPinned?: boolean
+  isArchived?: boolean
 }
 
 export interface DetectedScript {

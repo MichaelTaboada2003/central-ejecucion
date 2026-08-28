@@ -780,6 +780,13 @@ export const api = {
     return isPinned
   },
 
+  toggleArchiveProject: async (projectId: string, isArchived: boolean): Promise<boolean> => {
+    if (isTauri) return invoke<boolean>('toggle_archive_project', { projectId, isArchived })
+    const proj = memoryProjects.find(p => p.id === projectId)
+    if (proj) proj.isArchived = isArchived
+    return isArchived
+  },
+
 
 
   runProject: async (request: RunProjectRequest): Promise<ProcessInfo> => {

@@ -1,6 +1,6 @@
 import { listen } from '@tauri-apps/api/event'
 import {
-  AlertOctagon, AlertTriangle, AppWindow, ArrowLeft, ArrowUpRight, Bot, Box, Check,
+  AlertOctagon, AlertTriangle, AppWindow, Archive, ArchiveRestore, ArrowLeft, ArrowUpRight, Bot, Box, Check,
   ChevronRight, CircleStop, Cloud, CloudOff, Command, Copy, Database,
   DownloadCloud, FileCode2, Folder, FolderOpen, GitFork, Globe, HardDrive, Layers,
   LayoutDashboard, LayoutGrid, List, LoaderCircle, Lock, PackageOpen, Pin, Play, Plus, Radio,
@@ -65,12 +65,13 @@ const TerminalLine = memo(function TerminalLine({ entry }: { entry: TerminalEntr
   )
 })
 
-const statusLabels: Record<ProjectStatus | 'pinned', string> = {
+const statusLabels: Record<ProjectStatus | 'pinned' | 'archived', string> = {
   running: 'En ejecución',
   stopped: 'Detenido',
   starting: 'Iniciando…',
   error: 'Requiere atención',
   pinned: 'Fijados',
+  archived: 'Archivados',
 }
 
 function GitHubLogo({ size = 16, className = '', color = 'currentColor' }: { size?: number; className?: string; color?: string }) {
@@ -109,7 +110,8 @@ export default function App() {
   const [detail, setDetail] = useState<ProjectDetail | null>(null)
   const [tab, setTab] = useState<Tab>('summary')
   const [filter, setFilter] = useState('')
-  const [statusFilter, setStatusFilter] = useState<ProjectStatus | 'pinned' | 'all'>('all')
+  const [statusFilter, setStatusFilter] = useState<ProjectStatus | 'pinned' | 'archived' | 'all'>('all')
+  const [showArchivedSidebar, setShowArchivedSidebar] = useState(false)
   const [modal, setModal] = useState<Modal>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
@@ -315,23 +317,26 @@ export default function App() {
 
   const visibleProjects = useMemo(
     () => {
-      if (statusFilter === 'all') return searchedProjects
-      if (statusFilter === 'pinned') return searchedProjects.filter(project => project.isPinned)
-      return searchedProjects.filter(project => project.status === statusFilter)
+      if (statusFilter === 'all') return searchedProjects.filter(p => !p.isArchived)
+      if (statusFilter === 'pinned') return searchedProjects.filter(p => p.isPinned && !p.isArchived)
+      if (statusFilter === 'archived') return searchedProjects.filter(p => p.isArchived)
+      return searchedProjects.filter(project => project.status === statusFilter && !project.isArchived)
     },
     [searchedProjects, statusFilter]
   )
 
-  const pinnedProjects = useMemo(() => projects.filter(p => p.isPinned), [projects])
-  const otherProjects = useMemo(() => projects.filter(p => !p.isPinned), [projects])
+  const pinnedProjects = useMemo(() => projects.filter(p => p.isPinned && !p.isArchived), [projects])
+  const activeProjects = useMemo(() => projects.filter(p => !p.isPinned && !p.isArchived), [projects])
+  const archivedProjects = useMemo(() => projects.filter(p => p.isArchived), [projects])
 
   const stats = useMemo(
     () => ({
-      total: searchedProjects.length,
-      pinned: searchedProjects.filter(project => project.isPinned).length,
-      running: searchedProjects.filter(project => project.status === 'running').length,
-      stopped: searchedProjects.filter(project => project.status === 'stopped').length,
-      error: searchedProjects.filter(project => project.status === 'error').length,
+      total: searchedProjects.filter(p => !p.isArchived).length,
+      pinned: searchedProjects.filter(project => project.isPinned && !project.isArchived).length,
+      running: searchedProjects.filter(project => project.status === 'running' && !project.isArchived).length,
+      stopped: searchedProjects.filter(project => project.status === 'stopped' && !project.isArchived).length,
+      error: searchedProjects.filter(project => project.status === 'error' && !project.isArchived).length,
+      archived: searchedProjects.filter(project => project.isArchived).length,
     }),
     [searchedProjects]
   )
@@ -350,6 +355,28 @@ export default function App() {
       setNotice({
         kind: 'success',
         text: nextState ? `«${project.name}» fijado al inicio.` : `«${project.name}» desfijado.`,
+      })
+      await loadProjects()
+    } catch (error) {
+      showError(error)
+      await loadProjects()
+    }
+  }
+
+  const handleToggleArchive = async (project: Project, e?: React.MouseEvent) => {
+    e?.stopPropagation()
+    const nextState = !project.isArchived
+    setProjects(prev =>
+      prev.map(p => (p.id === project.id ? { ...p, isArchived: nextState } : p))
+    )
+    if (detail && detail.project.id === project.id) {
+      setDetail({ ...detail, project: { ...detail.project, isArchived: nextState } })
+    }
+    try {
+      await api.toggleArchiveProject(project.id, nextState)
+      setNotice({
+        kind: 'success',
+        text: nextState ? `«${project.name}» archivado.` : `«${project.name}» restaurado de archivados.`,
       })
       await loadProjects()
     } catch (error) {
@@ -640,7 +667,7 @@ export default function App() {
 
         <section className="project-nav">
           {pinnedProjects.length > 0 && (
-            <>
+            <div className="project-section">
               <div className="nav-heading" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--accent-amber)' }}>
                   <Pin size={11} fill="currentColor" /> FIJADOS
@@ -649,7 +676,7 @@ export default function App() {
                   {pinnedProjects.length}
                 </span>
               </div>
-              <div className="project-list" style={{ marginBottom: 12 }}>
+              <div className="project-list">
                 {pinnedProjects.map(project => {
                   const onGithub = isGitHubConnected(project)
                   return (
@@ -682,50 +709,105 @@ export default function App() {
                   )
                 })}
               </div>
-            </>
+            </div>
           )}
 
-          <div className="nav-heading" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span>{pinnedProjects.length > 0 ? 'OTROS PROYECTOS' : 'PROYECTOS'}</span>
-            {otherProjects.length > 0 && (
-              <span className="badge-count" style={{ fontSize: 10, padding: '1px 6px', background: 'var(--bg-surface-2)' }}>
-                {otherProjects.length}
-              </span>
-            )}
-          </div>
-          <div className="project-list">
-            {otherProjects.map(project => {
-              const onGithub = isGitHubConnected(project)
-              return (
-                <button
-                  className={`project-nav-item ${selectedId === project.id ? 'selected' : ''}`}
-                  key={project.id}
-                  onClick={() => {
-                    setSelectedId(project.id)
-                    setViewMode('local')
-                  }}
-                  title={`${project.name} · ${onGithub ? 'Sincronizado con GitHub' : 'Solo en almacenamiento local'}`}
-                >
-                  <StatusDot status={project.status} />
-                  <span className="project-nav-name">{project.name}</span>
+          <div className="project-section grow">
+            <div className="nav-heading" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span>{pinnedProjects.length > 0 ? 'OTROS PROYECTOS' : 'PROYECTOS'}</span>
+              {activeProjects.length > 0 && (
+                <span className="badge-count" style={{ fontSize: 10, padding: '1px 6px', background: 'var(--bg-surface-2)' }}>
+                  {activeProjects.length}
+                </span>
+              )}
+            </div>
+            <div className="project-list">
+              {activeProjects.map(project => {
+                const onGithub = isGitHubConnected(project)
+                return (
                   <button
-                    type="button"
-                    className="sidebar-pin-btn"
-                    onClick={e => handleTogglePin(project, e)}
-                    title="Fijar proyecto al inicio"
+                    className={`project-nav-item ${selectedId === project.id ? 'selected' : ''}`}
+                    key={project.id}
+                    onClick={() => {
+                      setSelectedId(project.id)
+                      setViewMode('local')
+                    }}
+                    title={`${project.name} · ${onGithub ? 'Sincronizado con GitHub' : 'Solo en almacenamiento local'}`}
                   >
-                    <Pin size={12} />
+                    <StatusDot status={project.status} />
+                    <span className="project-nav-name">{project.name}</span>
+                    <button
+                      type="button"
+                      className="sidebar-pin-btn"
+                      onClick={e => handleTogglePin(project, e)}
+                      title="Fijar proyecto al inicio"
+                    >
+                      <Pin size={12} />
+                    </button>
+                    {onGithub ? (
+                      <GitHubLogo size={13} color="var(--accent-cyan)" className="github-indicator-icon" />
+                    ) : (
+                      <HardDrive size={12} color="var(--text-tertiary)" className="local-indicator-icon" />
+                    )}
+                    {project.status === 'error' && <AlertTriangle size={13} color="var(--accent-rose)" />}
                   </button>
-                  {onGithub ? (
-                    <GitHubLogo size={13} color="var(--accent-cyan)" className="github-indicator-icon" />
-                  ) : (
-                    <HardDrive size={12} color="var(--text-tertiary)" className="local-indicator-icon" />
-                  )}
-                  {project.status === 'error' && <AlertTriangle size={13} color="var(--accent-rose)" />}
-                </button>
-              )
-            })}
+                )
+              })}
+            </div>
           </div>
+
+          {archivedProjects.length > 0 && (
+            <div className="project-section" style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: 10 }}>
+              <div
+                className="nav-heading"
+                style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+                onClick={() => setShowArchivedSidebar(prev => !prev)}
+                title="Mostrar/ocultar proyectos archivados"
+              >
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--accent-indigo)' }}>
+                  <Archive size={11} /> ARCHIVADOS {showArchivedSidebar ? '▾' : '▸'}
+                </span>
+                <span className="badge-count" style={{ fontSize: 10, padding: '1px 6px', background: 'rgba(99, 102, 241, 0.15)', color: 'var(--accent-indigo)' }}>
+                  {archivedProjects.length}
+                </span>
+              </div>
+              {showArchivedSidebar && (
+                <div className="project-list">
+                  {archivedProjects.map(project => {
+                    const onGithub = isGitHubConnected(project)
+                    return (
+                      <button
+                        className={`project-nav-item archived ${selectedId === project.id ? 'selected' : ''}`}
+                        key={project.id}
+                        onClick={() => {
+                          setSelectedId(project.id)
+                          setViewMode('local')
+                        }}
+                        title={`${project.name} (Archivado) · ${onGithub ? 'Sincronizado con GitHub' : 'Solo en almacenamiento local'}`}
+                      >
+                        <StatusDot status={project.status} />
+                        <span className="project-nav-name">{project.name}</span>
+                        <button
+                          type="button"
+                          className="sidebar-pin-btn active"
+                          onClick={e => handleToggleArchive(project, e)}
+                          title="Desarchivar proyecto"
+                          style={{ color: 'var(--accent-indigo)' }}
+                        >
+                          <ArchiveRestore size={12} />
+                        </button>
+                        {onGithub ? (
+                          <GitHubLogo size={13} color="var(--accent-cyan)" className="github-indicator-icon" />
+                        ) : (
+                          <HardDrive size={12} color="var(--text-tertiary)" className="local-indicator-icon" />
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </section>
 
         <div className="sidebar-footer">
@@ -830,6 +912,7 @@ export default function App() {
               onNotify={(text, kind) => setNotice({ kind, text })}
               onDeleteProject={setDeleteCandidate}
               onTogglePin={handleTogglePin}
+              onToggleArchive={handleToggleArchive}
             />
           ) : viewMode === 'github' ? (
             <GitHubHubView
@@ -870,6 +953,7 @@ export default function App() {
               onQuickStop={handleQuickStop}
               onDeleteProject={setDeleteCandidate}
               onTogglePin={handleTogglePin}
+              onToggleArchive={handleToggleArchive}
               busy={busy}
             />
           )}
@@ -996,6 +1080,7 @@ function ProjectWorkspace({
   onNotify,
   onDeleteProject,
   onTogglePin,
+  onToggleArchive,
 }: {
   detail: ProjectDetail
   gitHubRepo?: GitHubRepo
@@ -1020,6 +1105,7 @@ function ProjectWorkspace({
   onNotify: (text: string, kind: 'success' | 'error' | 'info') => void
   onDeleteProject: (project: Project) => void
   onTogglePin: (project: Project) => void
+  onToggleArchive: (project: Project) => void
 }) {
   const { project, scan, process, recentCommands } = detail
   const isRunning = project.status === 'running'
@@ -1074,7 +1160,7 @@ function ProjectWorkspace({
             <Terminal size={24} />
           </div>
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <h1>{project.name}</h1>
               <button
                 type="button"
@@ -1084,6 +1170,15 @@ function ProjectWorkspace({
               >
                 <Pin size={13} fill={project.isPinned ? 'currentColor' : 'none'} />
                 <span>{project.isPinned ? 'Fijado' : 'Fijar'}</span>
+              </button>
+              <button
+                type="button"
+                className={`archive-btn ${project.isArchived ? 'archived' : ''}`}
+                onClick={() => onToggleArchive(project)}
+                title={project.isArchived ? 'Restaurar proyecto de archivados' : 'Archivar proyecto'}
+              >
+                {project.isArchived ? <ArchiveRestore size={13} /> : <Archive size={13} />}
+                <span>{project.isArchived ? 'Archivado' : 'Archivar'}</span>
               </button>
             </div>
             <p style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -1281,13 +1376,14 @@ function Dashboard({
   onQuickStop,
   onDeleteProject,
   onTogglePin,
+  onToggleArchive,
   busy,
 }: {
   projects: Project[]
-  stats: { total: number; pinned: number; running: number; stopped: number; error: number }
+  stats: { total: number; pinned: number; running: number; stopped: number; error: number; archived: number }
   onRefreshAll: () => void
-  statusFilter: ProjectStatus | 'pinned' | 'all'
-  setStatusFilter: (value: ProjectStatus | 'pinned' | 'all') => void
+  statusFilter: ProjectStatus | 'pinned' | 'archived' | 'all'
+  setStatusFilter: (value: ProjectStatus | 'pinned' | 'archived' | 'all') => void
   isGitHubConnected: (project: Project) => boolean
   onSelect: (id: string) => void
   onRegister: () => void
@@ -1295,6 +1391,7 @@ function Dashboard({
   onQuickStop: (project: Project, e: React.MouseEvent) => void
   onDeleteProject: (project: Project) => void
   onTogglePin: (project: Project, e?: React.MouseEvent) => void
+  onToggleArchive: (project: Project, e?: React.MouseEvent) => void
   busy: string | null
 }) {
   return (
@@ -1340,13 +1437,13 @@ function Dashboard({
           icon={<CircleStop size={18} />}
         />
         <StatCard
-          label="Requieren atención"
-          value={stats.error}
-          status="error"
-          icon={<AlertTriangle size={18} />}
+          label="Archivados"
+          value={stats.archived}
+          status="neutral"
+          icon={<Archive size={18} color="var(--accent-indigo)" />}
         />
         <StatCard
-          label="Total de proyectos"
+          label="Total activos"
           value={stats.total}
           status="neutral"
           icon={<Layers size={18} />}
@@ -1359,12 +1456,12 @@ function Dashboard({
             <h2>Proyectos en tu Mac</h2>
             <p>
               {projects.length
-                ? `${projects.length} proyecto(s) listados en SQLite local`
-                : 'Sin proyectos registrados todavía'}
+                ? `${projects.length} proyecto(s) listados`
+                : 'Sin proyectos que coincidan con los filtros'}
             </p>
           </div>
           <div className="filter-group">
-            {(['all', 'pinned', 'running', 'stopped', 'error'] as const).map(status => {
+            {(['all', 'pinned', 'running', 'stopped', 'archived', 'error'] as const).map(status => {
               const count =
                 status === 'all'
                   ? stats.total
@@ -1374,6 +1471,8 @@ function Dashboard({
                   ? stats.running
                   : status === 'stopped'
                   ? stats.stopped
+                  : status === 'archived'
+                  ? stats.archived
                   : stats.error
               return (
                 <button
@@ -1406,7 +1505,7 @@ function Dashboard({
                   className="table-row"
                   key={project.id}
                   onClick={() => onSelect(project.id)}
-                  style={{ cursor: 'pointer' }}
+                  style={{ cursor: 'pointer', opacity: project.isArchived ? 0.75 : 1 }}
                 >
                   <span className="project-cell">
                     <span className="mini-icon">
@@ -1418,6 +1517,11 @@ function Dashboard({
                         {project.isPinned && (
                           <span className="pinned-badge" title="Proyecto fijado">
                             <Pin size={10} fill="currentColor" /> Fijado
+                          </span>
+                        )}
+                        {project.isArchived && (
+                          <span className="archived-badge" title="Proyecto archivado">
+                            <Archive size={10} /> Archivado
                           </span>
                         )}
                         {onGithub ? (
@@ -1499,6 +1603,30 @@ function Dashboard({
                       onMouseLeave={e => (e.currentTarget.style.color = project.isPinned ? 'var(--accent-amber)' : 'var(--text-tertiary)')}
                     >
                       <Pin size={15} fill={project.isPinned ? 'currentColor' : 'none'} />
+                    </button>
+                    <button
+                      className="icon-button"
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: project.isArchived ? 'var(--accent-indigo)' : 'var(--text-tertiary)',
+                        padding: '4px',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        transition: 'color 0.15s ease',
+                      }}
+                      title={project.isArchived ? 'Restaurar de archivados' : 'Archivar proyecto'}
+                      onClick={e => {
+                        e.stopPropagation()
+                        onToggleArchive(project, e)
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.color = 'var(--accent-indigo)')}
+                      onMouseLeave={e => (e.currentTarget.style.color = project.isArchived ? 'var(--accent-indigo)' : 'var(--text-tertiary)')}
+                    >
+                      {project.isArchived ? <ArchiveRestore size={15} /> : <Archive size={15} />}
                     </button>
                     <button
                       className="icon-button"

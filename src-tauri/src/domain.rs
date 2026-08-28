@@ -23,6 +23,8 @@ pub struct Project {
     pub last_error: Option<String>,
     #[serde(default)]
     pub is_pinned: bool,
+    #[serde(default)]
+    pub is_archived: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
