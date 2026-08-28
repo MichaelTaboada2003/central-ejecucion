@@ -3098,14 +3098,14 @@ function GitHubHubView({
                             <FolderOpen size={15} />
                           </button>
                           <button
-                            className="table-action-icon-btn danger"
+                            className="table-action-icon-btn offload"
                             onClick={e => {
                               e.stopPropagation()
                               onSafeOffload(repo)
                             }}
-                            title="Archivar en la nube y liberar espacio de disco (elimina copia local)"
+                            title="Archivar en GitHub y liberar espacio de disco (elimina copia local de forma segura)"
                           >
-                            <Trash2 size={15} />
+                            <CloudOff size={15} />
                           </button>
                         </>
                       ) : (
@@ -3213,14 +3213,14 @@ function GitHubHubView({
                               <FolderOpen size={15} />
                             </button>
                             <button
-                              className="table-action-icon-btn danger"
+                              className="table-action-icon-btn offload"
                               onClick={e => {
                                 e.stopPropagation()
                                 onSafeOffload(repo)
                               }}
-                              title="Archivar en la nube y liberar espacio de disco"
+                              title="Archivar en GitHub y liberar espacio de disco"
                             >
-                              <Trash2 size={15} />
+                              <CloudOff size={15} />
                             </button>
                           </div>
                         </>
@@ -3280,8 +3280,8 @@ function SafeOffloadModal({
     <Modal title="Archivar a la Nube y Liberar Disco" onClose={onClose}>
       <div className="cleanup-modal">
         <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
-          <div style={{ padding: 10, background: 'rgba(239, 68, 68, 0.1)', borderRadius: 8, color: 'var(--accent-rose)' }}>
-            <Cloud size={28} />
+          <div style={{ padding: 10, background: 'rgba(244, 63, 94, 0.12)', borderRadius: 10, color: 'var(--accent-rose)', border: '1px solid rgba(244, 63, 94, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <CloudOff size={26} />
           </div>
           <div>
             <h3 style={{ margin: '0 0 6px' }}>¿Deseas archivar «{candidate.name}»?</h3>
