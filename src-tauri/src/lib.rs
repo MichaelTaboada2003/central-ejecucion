@@ -700,7 +700,6 @@ fn publish_project_to_github(request: PublishToGitHubRequest, state: tauri::Stat
 
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let data_dir = app.path().app_data_dir().map_err(|error| -> Box<dyn std::error::Error> { Box::new(error) })?;
             let database_path = data_dir.join("dev-command-center.sqlite3");
