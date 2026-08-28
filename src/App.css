@@ -2461,6 +2461,57 @@ code, kbd, pre, .mono {
   border-color: var(--accent-amber-border);
 }
 
+/* Aviso de novedades en GitHub. Va arriba del todo y trae su propia acción:
+   enterarte y actuar no deben ser dos viajes distintos por la pantalla. */
+.git-aviso {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--accent-cyan-border);
+  background: var(--accent-cyan-subtle);
+  color: var(--accent-cyan);
+}
+
+.git-aviso > svg {
+  flex-shrink: 0;
+}
+
+.git-aviso p {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.git-aviso strong {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.git-aviso span {
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+
+.git-aviso .primary {
+  flex-shrink: 0;
+}
+
+/* La antigüedad del dato, en voz baja: un «0 por bajar» de hace tres semanas no
+   es una buena noticia, es un dato viejo. */
+.git-comprobado {
+  color: var(--text-muted);
+  font: 400 11px var(--font-mono);
+  white-space: nowrap;
+}
+
 /* ==========================================================================
    GRILLA DE REPOSITORIOS
    --------------------------------------------------------------------------

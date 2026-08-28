@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { GitTab } from '../GitTab'
@@ -6,6 +6,7 @@ import { estadoGit, proyecto } from '../../../../test/fixtures'
 
 const api = vi.hoisted(() => ({
   getProjectGitStatus: vi.fn(),
+  gitFetch: vi.fn(),
   gitCommit: vi.fn(),
   gitPush: vi.fn(),
   gitPull: vi.fn(),
@@ -13,8 +14,9 @@ const api = vi.hoisted(() => ({
 }))
 vi.mock('../../../../api', () => ({ api }))
 
-function montar(estado = estadoGit()) {
+function montar(estado = estadoGit(), trasComprobar = estado) {
   api.getProjectGitStatus.mockResolvedValue(estado)
+  api.gitFetch.mockResolvedValue(trasComprobar)
   api.gitCommit.mockResolvedValue({ success: true, message: 'Commit creado en local con 2 archivos: abc1234' })
   const onNotify = vi.fn()
   render(<GitTab project={proyecto()} onNotify={onNotify} onReloadProject={vi.fn()} />)
@@ -109,5 +111,50 @@ describe('GitTab: estados del repositorio', () => {
     montar(estadoGit({ uncommittedChanges: [], isClean: true }))
     expect(await screen.findByText(/no tienes archivos modificados/i)).toBeTruthy()
     expect(screen.queryByLabelText(/mensaje del commit/i)).toBeNull()
+  })
+})
+
+describe('GitTab: avisar de lo que espera en GitHub', () => {
+  it('al abrir la pestaña consulta GitHub: si no, «0 por bajar» sería un dato viejo', async () => {
+    montar()
+    await waitFor(() => expect(api.gitFetch).toHaveBeenCalledWith('proj-1'))
+  })
+
+  it('avisa con el número de commits y ofrece bajarlos ahí mismo', async () => {
+    const usuario = userEvent.setup()
+    api.gitPull.mockResolvedValue({ success: true, message: 'Cambios descargados.' })
+    montar(estadoGit(), estadoGit({ behindCount: 3, lastFetchAt: new Date().toISOString() }))
+
+    const aviso = await screen.findByRole('status')
+    expect(within(aviso).getByText(/GitHub tiene 3 commits nuevos en main/)).toBeTruthy()
+
+    await usuario.click(within(aviso).getByRole('button', { name: /bajar cambios/i }))
+    await waitFor(() => expect(api.gitPull).toHaveBeenCalledWith('proj-1'))
+  })
+
+  it('sin novedades no hay aviso', async () => {
+    montar(estadoGit(), estadoGit({ behindCount: 0, lastFetchAt: new Date().toISOString() }))
+    await waitFor(() => expect(api.gitFetch).toHaveBeenCalled())
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  it('dice cuándo se comprobó, y avisa cuando nunca se ha hecho', async () => {
+    montar(estadoGit({ lastFetchAt: null }), estadoGit({ lastFetchAt: null }))
+    expect(await screen.findByText('Sin comprobar')).toBeTruthy()
+  })
+
+  it('un fallo al comprobar no interrumpe: la pestaña sigue usable con lo local', async () => {
+    const { onNotify } = montar()
+    api.gitFetch.mockRejectedValue(new Error('sin red'))
+    await screen.findByText('src/App.tsx')
+    await waitFor(() => expect(api.gitFetch).toHaveBeenCalled())
+    expect(onNotify).not.toHaveBeenCalledWith('sin red', 'error')
+    expect(screen.getByText('src/App.tsx')).toBeTruthy()
+  })
+
+  it('un proyecto sin remoto no consulta nada', async () => {
+    montar(estadoGit({ remoteUrl: null, remoteName: null }))
+    await screen.findByText('src/App.tsx')
+    expect(api.gitFetch).not.toHaveBeenCalled()
   })
 })

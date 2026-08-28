@@ -226,9 +226,8 @@ const mockProjects: Project[] = [
     "lastUsedAt": "2026-08-26T14:36:19.789033Z",
     "diskSizeBytes": 134206,
     "tags": [
-      "react",
-      "next.js",
-      "tailwind"
+      "github",
+      "next.js"
     ],
     "createdAt": "2026-08-26T14:36:19.789033Z",
     "lastError": null
@@ -1081,6 +1080,12 @@ export const api = {
       lastCommitDate: 'hace 5 minutos',
       isClean: false,
     }
+  },
+
+  gitFetch: async (projectId: string): Promise<GitStatusInfo> => {
+    if (isTauri) return invoke<GitStatusInfo>('project_git_fetch', { projectId })
+    const actual = await api.getProjectGitStatus(projectId)
+    return { ...actual, behindCount: 3, lastFetchAt: new Date().toISOString(), remoteBranches: ['origin/main', 'origin/feature/login'] }
   },
 
   gitPull: async (projectId: string): Promise<GitActionResult> => {

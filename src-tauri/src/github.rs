@@ -673,6 +673,7 @@ impl GitHubService {
                 last_commit_hash: None,
                 last_commit_date: None,
                 is_clean: true,
+                last_fetch_at: None,
             });
         }
 
@@ -836,7 +837,50 @@ impl GitHubService {
             last_commit_hash,
             last_commit_date,
             is_clean,
+            last_fetch_at: Self::last_fetch_at(project_path),
         })
+    }
+
+    /// Marca de tiempo del último `git fetch`, leída de `.git/FETCH_HEAD`, que
+    /// es el fichero que git reescribe en cada consulta al remoto.
+    fn last_fetch_at(project_path: &Path) -> Option<String> {
+        let marca = std::fs::metadata(project_path.join(".git").join("FETCH_HEAD")).ok()?.modified().ok()?;
+        Some(chrono::DateTime::<chrono::Utc>::from(marca).to_rfc3339())
+    }
+
+    /// Pregunta a GitHub qué hay de nuevo SIN tocar el trabajo local: actualiza
+    /// las ramas de seguimiento y borra las que ya no existen en el remoto.
+    ///
+    /// Es imprescindible para que «por bajar» signifique algo: `git` cuenta
+    /// contra su copia local de `origin/*`, y esa copia solo cambia aquí.
+    pub fn git_fetch(project_path: &Path, token: Option<&str>) -> Result<GitActionResult, String> {
+        if Self::get_git_remote_url(project_path).is_none() {
+            return Err("Este proyecto no tiene un remoto configurado.".to_string());
+        }
+
+        let mut cmd = Self::git(project_path);
+        cmd.args(["fetch", "--prune"]);
+        match token.and_then(|t| Self::get_git_remote_url(project_path).and_then(|url| Self::inject_token_into_url(&url, t))) {
+            // Con URL explícita hay que dar el refspec: `git fetch <url>` a secas
+            // solo escribe FETCH_HEAD y deja `origin/*` igual de desactualizado.
+            Some(url) => cmd.args([&url, "+refs/heads/*:refs/remotes/origin/*"]),
+            None => cmd.arg("origin"),
+        };
+
+        let output = cmd.output().map_err(|error| format!("Error al ejecutar git fetch: {error}"))?;
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let combinada = format!("{stdout}\n{stderr}").trim().to_string();
+
+        if output.status.success() {
+            Ok(GitActionResult {
+                success: true,
+                message: "Comprobado con GitHub.".to_string(),
+                output: if combinada.is_empty() { None } else { Some(combinada) },
+            })
+        } else {
+            Err(format!("No se pudo consultar GitHub:\n{combinada}"))
+        }
     }
 
     pub fn git_pull(project_path: &Path, token: Option<&str>) -> Result<GitActionResult, String> {
@@ -1293,6 +1337,57 @@ mod tests {
 
         let error = GitHubService::git_push(&repo, None).expect_err("debe negarse");
         assert!(error.contains("desacoplado"), "{error}");
+    }
+
+    /// Sin `git fetch`, «por bajar» se calcula contra una copia local de
+    /// `origin/*` que puede llevar semanas parada: el panel decía «0» con
+    /// commits nuevos esperando en GitHub. Este test hace justo eso —publicar
+    /// desde otro clon y comprobar que el primero se entera.
+    #[test]
+    fn fetch_reveals_commits_waiting_on_the_remote() {
+        let base = tempdir().expect("tempdir");
+        let repo = repo_publicado(base.path());
+        let bare = base.path().join("remoto.git");
+
+        // Otro clon publica un commit y una rama nueva.
+        let otro = base.path().join("otro");
+        std::fs::create_dir_all(&otro).expect("dir");
+        git(&otro, &["clone", "-q", bare.to_str().expect("ruta"), "."]);
+        std::fs::write(otro.join("nuevo.py"), "x = 1").expect("nuevo");
+        git(&otro, &["add", "-A"]);
+        git(&otro, &["commit", "-qm", "trabajo de otro"]);
+        git(&otro, &["push", "-q"]);
+        git(&otro, &["checkout", "-qb", "feature/remota"]);
+        git(&otro, &["push", "-q", "-u", "origin", "feature/remota"]);
+
+        // Antes de comprobar, el primer clon no sabe nada.
+        let antes = GitHubService::get_project_git_status(&repo, None).expect("status");
+        assert_eq!(antes.behind_count, 0, "todavía no se ha consultado a GitHub");
+        assert!(antes.last_fetch_at.is_none(), "nunca se ha comprobado");
+        assert!(!antes.remote_branches.iter().any(|r| r.contains("feature/remota")), "{:?}", antes.remote_branches);
+
+        GitHubService::git_fetch(&repo, None).expect("fetch");
+
+        let despues = GitHubService::get_project_git_status(&repo, None).expect("status");
+        assert_eq!(despues.behind_count, 1, "debe ver el commit que espera en el remoto");
+        assert!(despues.last_fetch_at.is_some(), "debe registrar cuándo se comprobó");
+        assert!(
+            despues.remote_branches.iter().any(|r| r.contains("feature/remota")),
+            "las ramas creadas en el remoto deben aparecer: {:?}",
+            despues.remote_branches
+        );
+    }
+
+    /// Sin remoto no hay nada que comprobar, y decirlo es mejor que un fallo de
+    /// git en crudo.
+    #[test]
+    fn fetch_without_a_remote_explains_itself() {
+        let base = tempdir().expect("tempdir");
+        let repo = base.path().join("suelto");
+        std::fs::create_dir_all(&repo).expect("dir");
+        git(&repo, &["init", "-q"]);
+        let error = GitHubService::git_fetch(&repo, None).expect_err("debe negarse");
+        assert!(error.contains("remoto"), "{error}");
     }
 
     /// El token nunca debe quedar escrito en el remoto ni salir en los mensajes.

@@ -1,7 +1,8 @@
 import { ArrowUpRight, Check, Cloud, DownloadCloud, GitFork, LoaderCircle, RefreshCw, UploadCloud } from 'lucide-react'
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../../../api'
 import { canCommit, commitCounterState, selectedPaths, toggleExcluded } from '../../../lib/commit'
+import { formatRelative } from '../../../lib/format'
 import type { GitHubRepo, GitStatusInfo, Project } from '../../../types'
 import { GitHubLogo } from '../../../components/GitHubLogo'
 
@@ -21,6 +22,8 @@ export function GitTab({
   const [busy, setBusy] = useState<string | null>(null)
   const [commitMessage, setCommitMessage] = useState('')
   const [excluded, setExcluded] = useState<Set<string>>(new Set())
+  const [comprobando, setComprobando] = useState(false)
+  const comprobadoRef = useRef(false)
   const [publishName, setPublishName] = useState(project.name)
   const [publishDesc, setPublishDesc] = useState('')
   const [publishPrivate, setPublishPrivate] = useState(false)
@@ -44,9 +47,34 @@ export function GitTab({
     }
   }, [project.id])
 
+  /** Consulta a GitHub sin tocar el trabajo local. Es lo que hace que «por
+   *  bajar» signifique algo: git cuenta contra su copia de `origin/*`. */
+  const comprobarGitHub = useCallback(
+    async ({ silencioso }: { silencioso: boolean }) => {
+      setComprobando(true)
+      try {
+        setGitStatus(await api.gitFetch(project.id))
+      } catch (err: any) {
+        if (!silencioso) onNotify(err?.message || String(err), 'error')
+      } finally {
+        setComprobando(false)
+      }
+    },
+    [project.id, onNotify]
+  )
+
   useEffect(() => {
     void loadGitStatus()
   }, [loadGitStatus])
+
+  // Al abrir la pestaña se comprueba una vez en segundo plano: si falla la red o
+  // el token, la pestaña sigue siendo útil con los datos locales y no se
+  // interrumpe con un error que el usuario no pidió.
+  useEffect(() => {
+    if (!gitStatus?.isRepo || !gitStatus.remoteUrl || comprobadoRef.current) return
+    comprobadoRef.current = true
+    void comprobarGitHub({ silencioso: true })
+  }, [gitStatus?.isRepo, gitStatus?.remoteUrl, comprobarGitHub])
 
   const handlePull = async () => {
     setBusy('pull')
@@ -186,8 +214,33 @@ export function GitTab({
     )
   }
 
+  const hayNovedades = (gitStatus?.behindCount ?? 0) > 0
+
   return (
     <div className="git-tab">
+      {hayNovedades && (
+        <div className="git-aviso" role="status">
+          <DownloadCloud size={16} aria-hidden="true" />
+          <p>
+            {/* Cada línea hace un trabajo: la primera dice qué pasa, la segunda
+                por qué te conviene actuar ahora. */}
+            <strong>
+              GitHub tiene {gitStatus!.behindCount}{' '}
+              {gitStatus!.behindCount === 1 ? 'commit nuevo' : 'commits nuevos'} en{' '}
+              {gitStatus!.currentBranch ?? 'esta rama'}
+            </strong>
+            <span>
+              {gitStatus!.behindCount === 1 ? 'Bájalo' : 'Bájalos'} antes de seguir trabajando: así evitas resolver
+              conflictos después.
+            </span>
+          </p>
+          <button type="button" className="primary" onClick={handlePull} disabled={!!busy}>
+            {busy === 'pull' ? <LoaderCircle size={14} className="spin" /> : <DownloadCloud size={14} />}
+            Bajar cambios
+          </button>
+        </div>
+      )}
+
       <div className="git-status-hero">
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
           <div className="git-branch-pill">
@@ -223,14 +276,23 @@ export function GitTab({
         </div>
 
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {gitStatus.remoteUrl && (
+            <span className="git-comprobado" title="Cuándo se consultó GitHub por última vez">
+              {comprobando
+                ? 'Comprobando…'
+                : gitStatus.lastFetchAt
+                  ? `Comprobado ${formatRelative(gitStatus.lastFetchAt)}`
+                  : 'Sin comprobar'}
+            </span>
+          )}
           <button
             type="button"
             className="secondary"
-            onClick={loadGitStatus}
-            disabled={loading || !!busy}
-            title="Recargar estado de Git"
+            onClick={() => (gitStatus.remoteUrl ? void comprobarGitHub({ silencioso: false }) : void loadGitStatus())}
+            disabled={loading || comprobando || !!busy}
+            title={gitStatus.remoteUrl ? 'Comprobar si hay novedades en GitHub' : 'Recargar estado de Git'}
           >
-            <RefreshCw size={14} className={loading ? 'spin' : ''} />
+            <RefreshCw size={14} className={loading || comprobando ? 'spin' : ''} />
           </button>
           {gitStatus.remoteUrl ? (
             <>

@@ -198,6 +198,9 @@ export interface GitStatusInfo {
   lastCommitHash?: string | null
   lastCommitDate?: string | null
   isClean: boolean
+  /** Cuándo se consultó GitHub por última vez. Sin esto, «0 por bajar» mentiría:
+   *  las cuentas se hacen contra la copia local de las ramas remotas. */
+  lastFetchAt?: string | null
 }
 
 export interface GitFileChange {

@@ -10,6 +10,17 @@ pub fn get_project_git_status(project_id: String, state: tauri::State<'_, AppSta
     github::GitHubService::get_project_git_status(&root, token.as_deref())
 }
 
+/// Consulta a GitHub sin tocar el trabajo local. Se separa del `pull` a
+/// propósito: comprobar si hay novedades no debe cambiarte los ficheros.
+#[tauri::command(async)]
+pub fn project_git_fetch(project_id: String, state: tauri::State<'_, AppState>) -> Result<GitStatusInfo, String> {
+    let project = state.with_storage(|db| db.get_project(&project_id))?;
+    let token = state.github_token(None);
+    let root = trusted_project_root(&project)?;
+    github::GitHubService::git_fetch(&root, token.as_deref())?;
+    github::GitHubService::get_project_git_status(&root, token.as_deref())
+}
+
 #[tauri::command(async)]
 pub fn project_git_pull(project_id: String, state: tauri::State<'_, AppState>) -> Result<GitActionResult, String> {
     let project = state.with_storage(|db| db.get_project(&project_id))?;

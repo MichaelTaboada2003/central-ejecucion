@@ -168,6 +168,7 @@ pub fn run() {
             commands::github::safe_offload_project,
             // git
             commands::git::get_project_git_status,
+            commands::git::project_git_fetch,
             commands::git::project_git_pull,
             commands::git::project_git_push,
             commands::git::project_git_commit,

@@ -339,6 +339,11 @@ pub struct GitStatusInfo {
     pub last_commit_hash: Option<String>,
     pub last_commit_date: Option<String>,
     pub is_clean: bool,
+    /// Cuándo se consultó GitHub por última vez. Sin esto, un «0 por bajar»
+    /// mentiría: las cuentas se hacen contra la copia local de `origin/*`, que
+    /// solo cambia al hacer `git fetch`.
+    #[serde(default)]
+    pub last_fetch_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
