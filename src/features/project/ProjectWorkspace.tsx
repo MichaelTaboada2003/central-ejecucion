@@ -233,40 +233,6 @@ export function ProjectWorkspace({
           </div>
         </div>
 
-        {project.isArchived && (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 12,
-              padding: '10px 16px',
-              marginTop: 14,
-              marginBottom: 6,
-              background: 'rgba(99, 102, 241, 0.08)',
-              border: '1px solid rgba(99, 102, 241, 0.25)',
-              borderRadius: 'var(--radius-md, 8px)',
-              color: 'var(--text-secondary)',
-              fontSize: '0.85rem',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <Archive size={16} color="var(--accent-indigo)" />
-              <span>
-                Este proyecto está <strong>archivado</strong>. Está oculto de la lista activa de tu panel.
-              </span>
-            </div>
-            <button
-              type="button"
-              className="secondary"
-              style={{ padding: '4px 12px', fontSize: 12, height: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}
-              onClick={() => onToggleArchive(project)}
-            >
-              <ArchiveRestore size={13} /> Desarchivar
-            </button>
-          </div>
-        )}
-
         {/* La acción principal depende de la naturaleza del proyecto: un script
             de una pasada no tiene un «servidor de desarrollo» que arrancar, y un
             repo sin nada ejecutable no tiene acción ninguna. */}
