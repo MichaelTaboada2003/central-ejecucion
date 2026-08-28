@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { commandDuration, describeCommandOutcome, formatBytes, formatDate, getStackClass } from '../format'
+import { commandDuration, describeCommandOutcome, formatBytes, formatDate, formatRelative, getStackClass } from '../format'
 import type { CommandRecord } from '../../types'
 
 function registro(overrides: Partial<CommandRecord>): CommandRecord {
@@ -89,5 +89,28 @@ describe('describeCommandOutcome', () => {
 
   it('una ejecución en curso lo dice, no inventa un resultado', () => {
     expect(describeCommandOutcome(registro({ status: 'running' }), inicio + 3_000)).toBe('ejecutando · 3s')
+  })
+})
+
+describe('formatRelative', () => {
+  const ahora = Date.parse('2026-06-15T12:00:00.000Z')
+  const hace = (ms: number) => new Date(ahora - ms).toISOString()
+
+  it('usa la unidad que hace legible el dato', () => {
+    expect(formatRelative(hace(30_000), ahora)).toBe('hace un momento')
+    expect(formatRelative(hace(5 * 60_000), ahora)).toBe('hace 5 min')
+    expect(formatRelative(hace(3 * 3_600_000), ahora)).toBe('hace 3 h')
+    expect(formatRelative(hace(24 * 3_600_000), ahora)).toBe('ayer')
+    expect(formatRelative(hace(5 * 24 * 3_600_000), ahora)).toBe('hace 5 días')
+    expect(formatRelative(hace(60 * 24 * 3_600_000), ahora)).toBe('hace 2 meses')
+    expect(formatRelative(hace(400 * 24 * 3_600_000), ahora)).toBe('hace 1 año')
+  })
+
+  it('una fecha inválida no rompe la tarjeta', () => {
+    expect(formatRelative('basura', ahora)).toBe('—')
+  })
+
+  it('un reloj adelantado no produce «hace -3 días»', () => {
+    expect(formatRelative(new Date(ahora + 60_000).toISOString(), ahora)).toBe('en el futuro')
   })
 })

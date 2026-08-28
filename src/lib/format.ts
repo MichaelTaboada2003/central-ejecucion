@@ -53,3 +53,26 @@ export function describeCommandOutcome(command: CommandRecord, now: number = Dat
       : `falló (${command.exitCode})`
   return duration ? `${outcome} · ${duration}` : outcome
 }
+
+/**
+ * Fecha en tiempo relativo. «hace 3 días» dice de un vistazo si un repositorio
+ * sigue vivo; «25/8/2026» obliga a restar mentalmente.
+ */
+export function formatRelative(value: string, now: number = Date.now()): string {
+  const fecha = Date.parse(value)
+  if (Number.isNaN(fecha)) return '—'
+  const segundos = Math.round((now - fecha) / 1000)
+  if (segundos < 0) return 'en el futuro'
+  if (segundos < 60) return 'hace un momento'
+  const minutos = Math.floor(segundos / 60)
+  if (minutos < 60) return `hace ${minutos} min`
+  const horas = Math.floor(minutos / 60)
+  if (horas < 24) return `hace ${horas} h`
+  const dias = Math.floor(horas / 24)
+  if (dias === 1) return 'ayer'
+  if (dias < 30) return `hace ${dias} días`
+  const meses = Math.floor(dias / 30)
+  if (meses < 12) return `hace ${meses} ${meses === 1 ? 'mes' : 'meses'}`
+  const anios = Math.floor(meses / 12)
+  return `hace ${anios} ${anios === 1 ? 'año' : 'años'}`
+}

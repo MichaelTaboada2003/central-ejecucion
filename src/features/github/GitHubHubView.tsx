@@ -1,7 +1,7 @@
 import { ArrowUpRight, Check, Cloud, CloudOff, DownloadCloud, FolderOpen, GitFork, Globe, LayoutGrid, List, LoaderCircle, Lock, RefreshCw, Search, Settings2, Star } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { api } from '../../api'
-import { getStackClass } from '../../lib/format'
+import { formatRelative, getStackClass } from '../../lib/format'
 import type { GitHubAccountStatus, GitHubRepo } from '../../types'
 import { GitHubLogo } from '../../components/GitHubLogo'
 import { StatCard } from '../../components/Primitives'
@@ -155,6 +155,8 @@ export function GitHubHubView({
                 className={`view-toggle-btn ${layoutMode === 'table' ? 'active' : ''}`}
                 onClick={() => setLayoutMode('table')}
                 title="Vista en tabla (Igual al Panel Local)"
+                aria-label="Vista en tabla"
+                aria-pressed={layoutMode === 'table'}
               >
                 <List size={15} />
               </button>
@@ -162,6 +164,8 @@ export function GitHubHubView({
                 className={`view-toggle-btn ${layoutMode === 'grid' ? 'active' : ''}`}
                 onClick={() => setLayoutMode('grid')}
                 title="Vista en tarjetas"
+                aria-label="Vista en tarjetas"
+                aria-pressed={layoutMode === 'grid'}
               >
                 <LayoutGrid size={15} />
               </button>
@@ -313,118 +317,87 @@ export function GitHubHubView({
               })}
             </div>
           ) : (
-            <div className="github-grid">
+            <div className="repo-grid">
               {filteredRepos.map(repo => {
                 const isCloning = busy === `clone:${repo.name}`
+                // El dueño solo se muestra cuando NO eres tú: repetir «demo/» en
+                // cada tarjeta de tu propia cuenta es ruido, igual que lo era la
+                // píldora «PÚBLICO» en todas.
+                const [duenio] = repo.fullName.split('/')
+                const deOtro = Boolean(status?.username) && duenio !== status?.username
                 return (
-                  <div
-                    className={`github-card ${repo.isCloned ? 'is-cloned' : ''}`}
+                  /* La materialidad de la tarjeta ES el dato: lo que está en tu
+                     disco tiene cuerpo y lomo de color; lo que sigue en la nube
+                     es un contorno vacío. Así la grilla se lee como un
+                     inventario y no como tres tarjetas idénticas. */
+                  <article
                     key={repo.id}
-                    style={{ cursor: 'pointer' }}
-                    title={`Abrir «${repo.fullName}» en GitHub`}
-                    onClick={() => void api.openExternalUrl(repo.htmlUrl)}
+                    className={`repo-card ${repo.isCloned ? 'presente' : 'ausente'}`}
+                    data-lenguaje={(repo.language ?? '').toLowerCase()}
                   >
-                    <div className="github-card-header">
-                      <div className="github-repo-name">
-                        <span
-                          className="github-title-link"
-                          title="Ver en GitHub"
-                        >
-                          <strong>{repo.name}</strong>
-                          <ArrowUpRight size={14} />
-                        </span>
-                        <span className="github-full-name">{repo.fullName}</span>
-                      </div>
-                      <div className="github-badges">
-                        {repo.isPrivate ? (
-                          <span className="vis-badge private" title="Repositorio privado">
-                            <Lock size={11} /> Privado
-                          </span>
-                        ) : (
-                          <span className="vis-badge public" title="Repositorio público">
-                            <Globe size={11} /> Público
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    <p className="github-desc">{repo.description || 'Sin descripción en GitHub.'}</p>
-
-                    <div className="github-meta-row">
-                      {repo.language && (
-                        <span className="github-lang">
-                          <span className="lang-dot" />
-                          {repo.language}
-                        </span>
-                      )}
-                      {repo.stars > 0 && (
-                        <span className="github-stat">
-                          <Star size={12} /> {repo.stars}
-                        </span>
-                      )}
-                      {repo.forks > 0 && (
-                        <span className="github-stat">
-                          <GitFork size={12} /> {repo.forks}
-                        </span>
-                      )}
-                      <span className="github-updated">
-                        Actualizado: {new Date(repo.updatedAt).toLocaleDateString()}
-                      </span>
-                    </div>
-
-                    <div className="github-card-actions">
-                      {repo.isCloned ? (
-                        <>
-                          <div className="cloned-badge">
-                            <Check size={13} color="var(--accent-primary)" />
-                            <span>En tu Mac (Listo)</span>
-                          </div>
-                          <div style={{ display: 'flex', gap: 6 }}>
-                            <button
-                              className="table-action-icon-btn open"
-                              onClick={e => {
-                                e.stopPropagation()
-                                onOpenLocal(repo)
-                              }}
-                              title={repo.localProjectId ? 'Abrir en Panel Local' : 'Está en tu disco pero no registrado en el panel'}
-                            >
-                              <FolderOpen size={15} />
-                            </button>
-                            <button
-                              className="table-action-icon-btn offload"
-                              onClick={e => {
-                                e.stopPropagation()
-                                onSafeOffload(repo)
-                              }}
-                              title="Archivar en GitHub y liberar espacio de disco"
-                            >
-                              <CloudOff size={15} />
-                            </button>
-                          </div>
-                        </>
-                      ) : (
+                    <header className="repo-card-head">
+                      <h3 className="repo-nombre">
                         <button
-                          className="primary"
-                          onClick={e => {
-                            e.stopPropagation()
-                            onClone(repo)
-                          }}
-                          disabled={isCloning || !!busy}
-                          style={{ width: '100%', height: 32, fontSize: 12 }}
+                          type="button"
+                          className="repo-enlace"
+                          onClick={() => void api.openExternalUrl(repo.htmlUrl)}
+                          title={`Abrir ${repo.fullName} en GitHub`}
                         >
-                          {isCloning ? (
-                            <>
-                              <LoaderCircle size={13} className="spin" /> Clonando repositorio…
-                            </>
-                          ) : (
-                            <>
-                              <DownloadCloud size={13} /> Clonar
-                            </>
-                          )}
+                          {deOtro && <span className="repo-duenio">{duenio}/</span>}
+                          {repo.name}
+                          <ArrowUpRight size={13} aria-hidden="true" />
                         </button>
+                      </h3>
+                      {repo.isPrivate && (
+                        <span className="repo-privado" title="Repositorio privado">
+                          <Lock size={11} aria-hidden="true" />
+                        </span>
                       )}
-                    </div>
-                  </div>
+                    </header>
+
+                    {repo.description && <p className="repo-desc">{repo.description}</p>}
+
+                    <p className="repo-meta">
+                      {repo.language && (
+                        <>
+                          <span className="repo-lenguaje">{repo.language}</span>
+                          <span aria-hidden="true"> · </span>
+                        </>
+                      )}
+                      {formatRelative(repo.updatedAt)}
+                      {repo.stars > 0 && <span aria-hidden="true"> · {repo.stars} ★</span>}
+                    </p>
+
+                    <footer className="repo-card-pie">
+                      <span className="repo-estado">{repo.isCloned ? 'En tu Mac' : 'Solo en la nube'}</span>
+                      <span className="repo-acciones">
+                        {repo.isCloned ? (
+                          <>
+                            <button type="button" onClick={() => onOpenLocal(repo)}>
+                              <FolderOpen size={13} aria-hidden="true" /> Abrir
+                            </button>
+                            <button
+                              type="button"
+                              className="liberar"
+                              onClick={() => onSafeOffload(repo)}
+                              title="Comprueba que todo esté en GitHub y borra la copia local"
+                            >
+                              <CloudOff size={13} aria-hidden="true" /> Liberar
+                            </button>
+                          </>
+                        ) : (
+                          <button type="button" onClick={() => onClone(repo)} disabled={isCloning || !!busy}>
+                            {isCloning ? (
+                              <LoaderCircle size={13} className="spin" aria-hidden="true" />
+                            ) : (
+                              <DownloadCloud size={13} aria-hidden="true" />
+                            )}
+                            {isCloning ? 'Clonando…' : 'Clonar'}
+                          </button>
+                        )}
+                      </span>
+                    </footer>
+                  </article>
                 )
               })}
             </div>
