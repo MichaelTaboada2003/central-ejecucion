@@ -343,6 +343,7 @@ impl DevCommandCenterMcp {
     fn dev_command_center_list_projects(&self) -> Result<String, String> {
         self.with_state(|state| {
             let mut projects = state.storage.list_projects()?;
+            crate::storage::mark_unavailable_projects(&mut projects);
             let listening_ports = detect_all_listening_ports();
             let mut cwd_cache: HashMap<u32, Option<String>> = HashMap::new();
 
@@ -384,6 +385,7 @@ impl DevCommandCenterMcp {
                 project_type: scan.project_type, frameworks: scan.frameworks, package_manager: scan.package_manager, dev_command: scan.dev_command, build_command: scan.build_command, test_command: scan.test_command,
                 local_url: scan.local_url, port: scan.port, status: ProjectStatus::Stopped, last_used_at: None, disk_size_bytes: report.total_bytes,
                 tags: request.tags.unwrap_or_default().into_iter().map(|tag| tag.trim().to_string()).filter(|tag| !tag.is_empty()).collect(), created_at: Utc::now().to_rfc3339(), last_error: None,
+                is_pinned: false, is_archived: false,
             };
             if is_project_running(&project).is_some() {
                 project.status = ProjectStatus::Running;

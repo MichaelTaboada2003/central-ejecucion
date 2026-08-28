@@ -16,6 +16,14 @@ pub fn canonical_project_path(raw: &str) -> Result<PathBuf, String> {
     Ok(canonical)
 }
 
+/// Orden en el que se busca el script que arranca el entorno de desarrollo.
+///
+/// `start:dev` va antes que `start` por NestJS: `start` es `nest start` (sin
+/// recarga) y `start:dev` es `nest start --watch`, que es lo que se espera de un
+/// servidor de desarrollo. `start` queda como ultimo recurso genérico (Create
+/// React App y similares solo tienen ese).
+pub const DEV_SCRIPT_PREFERENCE: &[&str] = &["dev", "start:dev", "develop", "web", "start", "serve"];
+
 pub fn scan_project(path: &Path) -> Result<ProjectScan, String> {
     let mut scan = ProjectScan::default();
     let mut types = Vec::new();
@@ -113,15 +121,25 @@ pub fn scan_project(path: &Path) -> Result<ProjectScan, String> {
                 .cloned()
                 .collect::<Vec<_>>();
             add_node_frameworks(&dependency_names, &mut frameworks);
-            if scan.dev_command.is_none() { scan.dev_command = script_command(&scan.scripts, &["dev", "web", "start", "serve"]); }
+            if scan.dev_command.is_none() { scan.dev_command = script_command(&scan.scripts, DEV_SCRIPT_PREFERENCE); }
             if scan.build_command.is_none() { scan.build_command = script_command(&scan.scripts, &["build"]); }
             if scan.test_command.is_none() { scan.test_command = script_command(&scan.scripts, &["test"]); }
-            let scripts_text = package_json
-                .get("scripts")
-                .and_then(|value| value.as_object())
-                .map(|scripts| scripts.values().filter_map(|value| value.as_str()).collect::<Vec<_>>().join(" "))
-                .unwrap_or_default();
-            if scan.port.is_none() { scan.port = detect_port(&scripts_text); }
+            // El puerto se lee SOLO del script de desarrollo elegido. Mirar el
+            // texto de todos los scripts hacia que un `storybook dev -p 6006`
+            // le robara el puerto a un `next dev` que no declara ninguno, y la
+            // app abria la URL equivocada y arrancaba el servidor en el puerto
+            // de Storybook.
+            if scan.port.is_none() {
+                scan.port = package_json
+                    .get("scripts")
+                    .and_then(|value| value.as_object())
+                    .and_then(|scripts| {
+                        DEV_SCRIPT_PREFERENCE
+                            .iter()
+                            .find_map(|name| scripts.get(*name).and_then(|value| value.as_str()))
+                    })
+                    .and_then(detect_port);
+            }
         }
     }
 
@@ -217,6 +235,14 @@ pub fn scan_project(path: &Path) -> Result<ProjectScan, String> {
             scan.scripts.push(DetectedScript { name: "dev".into(), command: "flask run".into(), source: "Flask".into() });
             if scan.dev_command.is_none() { scan.dev_command = Some("flask run".into()); }
             if scan.port.is_none() { scan.port = Some(5000); }
+        } else if let Some(entrypoint) = python_entrypoint(path) {
+            // Un script suelto tambien es un proyecto ejecutable. Sin este caso
+            // los proyectos Python sin framework se quedaban sin ningun script
+            // detectado y el boton de arranque respondia «No se detecto un
+            // script ejecutable para dev».
+            let command = format!("python {entrypoint}");
+            scan.scripts.push(DetectedScript { name: "dev".into(), command: command.clone(), source: entrypoint.clone() });
+            if scan.dev_command.is_none() { scan.dev_command = Some(command); }
         }
     }
 
@@ -453,6 +479,12 @@ pub fn scan_project(path: &Path) -> Result<ProjectScan, String> {
     scan.manifests = manifests;
     scan.lockfile = lockfile;
 
+    // Un puerto fijado en la configuracion manda sobre el valor por omision del
+    // framework: en un proyecto Tauri, por ejemplo, `vite.config.ts` fija el
+    // puerto y suponer 5173 dejaba la ventana apuntando a un servidor que no
+    // existe.
+    if scan.port.is_none() { scan.port = detect_config_port(path); }
+
     if scan.port.is_none() {
         if scan.frameworks.iter().any(|f| f == "Next.js" || f == "Nuxt" || f == "Remix") {
             scan.port = Some(3000);
@@ -470,6 +502,12 @@ pub fn scan_project(path: &Path) -> Result<ProjectScan, String> {
             scan.port = Some(8000);
         } else if scan.frameworks.iter().any(|f| f == "Flask") {
             scan.port = Some(5000);
+        } else if scan.frameworks.iter().any(|f| f == "NestJS" || f == "Express" || f == "Fastify") {
+            // Un backend Node declara su puerto en `.env`, no en el script. Sin
+            // puerto la app no puede abrir su URL y, sobre todo, nunca lo ve
+            // «en ejecución»: el estado real se deduce de quién escucha el
+            // puerto. Solo se lee la clave del puerto de ese fichero.
+            scan.port = env_file_port(path).or(Some(3000));
         }
     }
 
@@ -567,6 +605,12 @@ fn describe_project_type(types: &[String], frameworks: &BTreeSet<String>) -> Str
     }
     let has = |name: &str| frameworks.contains(name);
 
+    // Tauri es JavaScript + Rust por definición y suele traer un workspace: que
+    // haya dos lenguajes no lo convierte en un monorepo, así que gana al resto.
+    if has("Tauri") {
+        return "Tauri Desktop App".into();
+    }
+
     // Un repositorio con varios lenguajes y marcadores de workspace se describe
     // por lo que es; el detalle vive en la lista de frameworks.
     if has("Monorepo") && types.len() > 1 {
@@ -574,9 +618,7 @@ fn describe_project_type(types: &[String], frameworks: &BTreeSet<String>) -> Str
     }
 
     // De lo más específico a lo más genérico.
-    let framework_label = if has("Tauri") {
-        Some("Tauri Desktop App")
-    } else if has("Expo") {
+    let framework_label = if has("Expo") {
         Some("Expo App")
     } else if has("React Native") {
         Some("React Native App")
@@ -606,6 +648,12 @@ fn describe_project_type(types: &[String], frameworks: &BTreeSet<String>) -> Str
         Some("Laravel App")
     } else if has("Express") || has("Fastify") {
         Some("Node.js Backend")
+    } else if has("React") {
+        Some("React App")
+    } else if has("Vue") {
+        Some("Vue App")
+    } else if has("Svelte") {
+        Some("Svelte App")
     } else if has("Vite") {
         Some("Vite App")
     } else if has("Jupyter") {
@@ -659,6 +707,14 @@ fn has_notebook(path: &Path) -> bool {
     })
 }
 
+/// Punto de entrada de un proyecto Python sin framework, por convencion.
+fn python_entrypoint(root: &Path) -> Option<String> {
+    ["main.py", "app.py"]
+        .iter()
+        .find(|name| root.join(name).is_file())
+        .map(|name| (*name).to_string())
+}
+
 fn python_script_to_spec(root: &Path, scan: &ProjectScan, script_name: &str) -> Result<CommandSpec, String> {
     let py_bin = find_python_executable(root);
     let is_uv = scan.package_manager.as_deref() == Some("uv") && py_bin == "python3";
@@ -693,7 +749,14 @@ fn python_script_to_spec(root: &Path, scan: &ProjectScan, script_name: &str) -> 
                     spec(&py_bin, &["-m", "flask", "run"])
                 }
             } else {
-                spec(&py_bin, &["main.py"])
+                // `main.py` no siempre existe: hay proyectos que arrancan por
+                // `app.py`, y lanzar un fichero inexistente fallaba en el acto.
+                let entrypoint = python_entrypoint(root).unwrap_or_else(|| "main.py".into());
+                if is_uv {
+                    spec("uv", &["run", "python", &entrypoint])
+                } else {
+                    spec(&py_bin, &[&entrypoint])
+                }
             }
         }
         "test" => {
@@ -758,7 +821,7 @@ pub fn command_for_action_on_port(
         return install_command(root, scan);
     }
     let script = match action {
-        "dev" => ["dev", "web", "start", "serve"].iter().find_map(|candidate| scan.scripts.iter().find(|script| script.name == *candidate)),
+        "dev" => DEV_SCRIPT_PREFERENCE.iter().find_map(|candidate| scan.scripts.iter().find(|script| script.name == *candidate)),
         "build" | "test" | "lint" | "format" | "typecheck" => scan.scripts.iter().find(|script| script.name == action),
         "script" => requested_script.and_then(|name| scan.scripts.iter().find(|script| script.name == name)),
         _ => return Err("Acción no admitida. Solo se ejecutan scripts detectados o instalaciones del gestor detectado.".into()),
@@ -899,6 +962,61 @@ fn dependency_matches(name: &str, dependency: &str) -> bool {
         || name.starts_with(&format!("{dependency}-"))
         || name.starts_with(&format!("{dependency}/"))
         || name.starts_with(&format!("@{dependency}/"))
+}
+
+/// Puerto declarado en un fichero de entorno. Se leen unicamente las claves
+/// `PORT` y `APP_PORT`; el resto del contenido se ignora.
+fn env_file_port(root: &Path) -> Option<u16> {
+    for name in [".env", ".env.local", ".env.development"] {
+        let candidate = root.join(name);
+        if !candidate.is_file() { continue; }
+        let Ok(content) = fs::read_to_string(&candidate) else { continue };
+        for line in content.lines() {
+            let line = line.trim();
+            if line.starts_with('#') { continue; }
+            let Some((key, value)) = line.split_once('=') else { continue };
+            if !matches!(key.trim(), "PORT" | "APP_PORT") { continue; }
+            let value = value.trim().trim_matches('"').trim_matches('\'');
+            if let Ok(port) = value.parse::<u16>() {
+                if port > 0 { return Some(port); }
+            }
+        }
+    }
+    None
+}
+
+/// Puerto declarado en la configuracion del bundler. Se toma la primera
+/// aparicion de `port:`, que es la del servidor: las siguientes suelen ser
+/// secundarias (por ejemplo el `hmr.port` de Vite).
+fn detect_config_port(root: &Path) -> Option<u16> {
+    const CONFIGS: &[&str] = &[
+        "vite.config.ts", "vite.config.js", "vite.config.mjs", "vite.config.mts", "vite.config.cjs",
+        "astro.config.ts", "astro.config.js", "astro.config.mjs",
+        "svelte.config.js", "nuxt.config.ts", "nuxt.config.js",
+    ];
+    for name in CONFIGS {
+        let candidate = root.join(name);
+        if !candidate.is_file() { continue; }
+        let Ok(content) = fs::read_to_string(&candidate) else { continue };
+        if let Some(port) = first_declared_port(&content) { return Some(port); }
+    }
+    None
+}
+
+fn first_declared_port(content: &str) -> Option<u16> {
+    let mut rest = content;
+    while let Some(index) = rest.find("port") {
+        let after = &rest[index + "port".len()..];
+        let trimmed = after.trim_start();
+        if let Some(value) = trimmed.strip_prefix(':') {
+            let digits = value.trim_start().chars().take_while(char::is_ascii_digit).collect::<String>();
+            if let Ok(port) = digits.parse::<u16>() {
+                if port > 0 { return Some(port); }
+            }
+        }
+        rest = &rest[index + "port".len()..];
+    }
+    None
 }
 
 fn detect_port(input: &str) -> Option<u16> {
@@ -1067,6 +1185,95 @@ mod tests {
         assert_eq!(scan.dev_command.as_deref(), Some("pnpm run dev"));
     }
 
+    /// Regresión: en un backend NestJS `start` es `nest start` (una sola pasada)
+    /// y `start:dev` es `nest start --watch`. La lista de preferencia ponía
+    /// `start` antes, así que el botón de arranque levantaba el servidor sin
+    /// recarga en caliente.
+    #[test]
+    fn prefers_the_watch_script_of_a_nest_backend() {
+        let directory = tempdir().expect("tempdir");
+        fs::write(
+            directory.path().join("package.json"),
+            r#"{"scripts":{"build":"nest build","start":"nest start","start:dev":"nest start --watch","test":"jest"},"dependencies":{"@nestjs/core":"11"}}"#,
+        ).expect("package");
+        fs::write(directory.path().join("package-lock.json"), "{}").expect("lock");
+        let scan = scan_project(directory.path()).expect("scan");
+        assert_eq!(scan.dev_command.as_deref(), Some("npm run start:dev"));
+        let command = command_for_action(directory.path(), &scan, "dev", None).expect("command");
+        assert_eq!(command.display, "npm run start:dev");
+    }
+
+    /// Un backend Node declara su puerto en `.env`. Sin puerto la app no puede
+    /// abrir su URL ni deducir que está en ejecución, porque el estado real se
+    /// resuelve mirando quién escucha ese puerto.
+    #[test]
+    fn takes_the_port_of_a_node_backend_from_its_env_file() {
+        let directory = tempdir().expect("tempdir");
+        fs::write(
+            directory.path().join("package.json"),
+            r#"{"scripts":{"start":"nest start","start:dev":"nest start --watch"},"dependencies":{"@nestjs/core":"11"}}"#,
+        ).expect("package");
+        fs::write(directory.path().join(".env"), "DATABASE_URL=postgres://x\nPORT=3001\n").expect("env");
+        let scan = scan_project(directory.path()).expect("scan");
+        assert_eq!(scan.port, Some(3001));
+
+        // Sin fichero de entorno queda el puerto convencional del framework.
+        fs::remove_file(directory.path().join(".env")).expect("rm env");
+        let scan = scan_project(directory.path()).expect("scan");
+        assert_eq!(scan.port, Some(3000));
+    }
+
+    /// Regresión: el puerto se buscaba en el texto de TODOS los scripts, así que
+    /// un `storybook dev -p 6006` le robaba el puerto a un `next dev` que no
+    /// declara ninguno. La app abría la URL equivocada y arrancaba el servidor
+    /// en el puerto de Storybook.
+    #[test]
+    fn ignores_the_port_of_scripts_that_are_not_the_dev_server() {
+        let directory = tempdir().expect("tempdir");
+        fs::write(
+            directory.path().join("package.json"),
+            r#"{"scripts":{"dev":"next dev --turbopack","build":"next build","storybook":"storybook dev -p 6006"},"dependencies":{"next":"15"}}"#,
+        ).expect("package");
+        let scan = scan_project(directory.path()).expect("scan");
+        assert_eq!(scan.port, Some(3000), "debe caer al puerto de Next, no al de Storybook");
+        assert_eq!(scan.local_url.as_deref(), Some("http://localhost:3000"));
+    }
+
+    /// El puerto declarado en la configuración del bundler manda sobre el valor
+    /// por omisión del framework: un proyecto Tauri fija el puerto en
+    /// `vite.config.ts` y suponer 5173 dejaba la ventana apuntando a un servidor
+    /// inexistente. La segunda aparición (`hmr.port`) no debe ganar.
+    #[test]
+    fn reads_the_port_declared_in_the_bundler_config() {
+        let directory = tempdir().expect("tempdir");
+        fs::write(directory.path().join("package.json"), r#"{"scripts":{"dev":"vite"},"dependencies":{"vite":"7"}}"#).expect("package");
+        fs::write(
+            directory.path().join("vite.config.ts"),
+            "export default defineConfig({ server: { port: 1420, strictPort: true, hmr: { port: 1421 } } })",
+        ).expect("config");
+        let scan = scan_project(directory.path()).expect("scan");
+        assert_eq!(scan.port, Some(1420));
+    }
+
+    /// Regresión: un proyecto Python sin framework no registraba ningún script,
+    /// así que el botón de arranque respondía «No se detectó un script
+    /// ejecutable para dev» aunque tuviera un punto de entrada evidente.
+    #[test]
+    fn runs_a_plain_python_project_by_its_entrypoint() {
+        let directory = tempdir().expect("tempdir");
+        fs::write(directory.path().join("requirements.txt"), "requests==2.32.0\n").expect("requirements");
+        fs::write(directory.path().join("app.py"), "print('hola')").expect("app");
+        let scan = scan_project(directory.path()).expect("scan");
+        assert_eq!(scan.dev_command.as_deref(), Some("python app.py"));
+        let command = command_for_action(directory.path(), &scan, "dev", None).expect("command");
+        assert!(command.args.iter().any(|arg| arg == "app.py"), "debe lanzar app.py, no un main.py inexistente: {:?}", command.args);
+
+        // Con `main.py` presente, gana la convención habitual.
+        fs::write(directory.path().join("main.py"), "print('hola')").expect("main");
+        let scan = scan_project(directory.path()).expect("scan");
+        assert_eq!(scan.dev_command.as_deref(), Some("python main.py"));
+    }
+
     #[test]
     fn refuses_actions_that_are_not_detected() {
         let scan = ProjectScan::default();
@@ -1156,6 +1363,17 @@ mod tests {
         let label = describe_project_type(&types, &frameworks(&["React", "Vite", "Tauri", "Rust"]));
         assert_eq!(label, "Tauri Desktop App");
         assert!(!label.contains('+'));
+
+        // Un Tauri con workspace declarado sigue siendo una app, no un monorepo.
+        assert_eq!(
+            describe_project_type(&types, &frameworks(&["Tauri", "Monorepo", "React"])),
+            "Tauri Desktop App"
+        );
+        // El framework de UI pesa más que la herramienta de build.
+        assert_eq!(
+            describe_project_type(&["Node.js".to_string()], &frameworks(&["Vite", "React"])),
+            "React App"
+        );
 
         // Gana el marco más específico sobre el genérico.
         assert_eq!(

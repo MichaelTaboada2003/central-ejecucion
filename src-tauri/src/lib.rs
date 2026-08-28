@@ -44,6 +44,10 @@ pub struct AppState {
 #[tauri::command(async)]
 fn list_projects(state: tauri::State<'_, AppState>) -> Result<Vec<Project>, String> {
     let mut projects = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.list_projects()?;
+    // El mutex ya está liberado: comprobar en disco si cada carpeta sigue
+    // montada puede tardar segundos en un volumen dormido y no debe bloquear
+    // los demás comandos.
+    storage::mark_unavailable_projects(&mut projects);
     update_projects_status_batch(&mut projects, &state.processes);
     Ok(projects)
 }
@@ -92,11 +96,15 @@ fn get_project_detail(project_id: String, state: tauri::State<'_, AppState>) -> 
     } else {
         project.status = ProjectStatus::Running;
     }
+    // Un volumen externo desmontado o un `canonicalize` que cambia de destino no
+    // pueden costar el registro del proyecto: antes se borraba la fila y con ella
+    // sus etiquetas, su historial y su estado de fijado. Se marca el fallo y el
+    // usuario decide si lo borra desde el detalle.
     let root = match trusted_project_root(&project) {
         Ok(r) => r,
-        Err(_) => {
-            let _ = state.storage.lock().map(|db| db.delete_project(&project_id));
-            return Err("La carpeta del proyecto ya no existe en el disco y ha sido removida de la lista.".into());
+        Err(error) => {
+            let _ = state.storage.lock().map(|db| db.mark_project_error(&project_id, &error));
+            return Err(error);
         }
     };
     let scan = scan_project(&root)?;
@@ -107,11 +115,15 @@ fn get_project_detail(project_id: String, state: tauri::State<'_, AppState>) -> 
 #[tauri::command(async)]
 fn refresh_project(project_id: String, state: tauri::State<'_, AppState>) -> Result<Project, String> {
     let mut project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&project_id)?;
+    // Un volumen externo desmontado o un `canonicalize` que cambia de destino no
+    // pueden costar el registro del proyecto: antes se borraba la fila y con ella
+    // sus etiquetas, su historial y su estado de fijado. Se marca el fallo y el
+    // usuario decide si lo borra desde el detalle.
     let root = match trusted_project_root(&project) {
         Ok(r) => r,
-        Err(_) => {
-            let _ = state.storage.lock().map(|db| db.delete_project(&project_id));
-            return Err("La carpeta del proyecto ya no existe en el disco y ha sido removida de la lista.".into());
+        Err(error) => {
+            let _ = state.storage.lock().map(|db| db.mark_project_error(&project_id, &error));
+            return Err(error);
         }
     };
     let scan = scan_project(&root)?;
@@ -155,6 +167,7 @@ fn refresh_all_projects(state: tauri::State<'_, AppState>) -> Result<Vec<Project
         let _ = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.refresh_project_metadata(&project);
     }
     let mut refreshed = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.list_projects()?;
+    storage::mark_unavailable_projects(&mut refreshed);
     update_projects_status_batch(&mut refreshed, &state.processes);
     Ok(refreshed)
 }

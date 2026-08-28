@@ -327,21 +327,36 @@ export default function App() {
     [searchedProjects, statusFilter]
   )
 
-  const pinnedProjects = useMemo(() => projects.filter(p => p.isPinned && !p.isArchived), [projects])
-  const activeProjects = useMemo(() => projects.filter(p => !p.isPinned && !p.isArchived), [projects])
-  const archivedProjects = useMemo(() => projects.filter(p => p.isArchived), [projects])
+  const { pinnedProjects, activeProjects, archivedProjects } = useMemo(() => {
+    const pinned: Project[] = []
+    const active: Project[] = []
+    const archived: Project[] = []
+    for (const project of projects) {
+      if (project.isArchived) archived.push(project)
+      else if (project.isPinned) pinned.push(project)
+      else active.push(project)
+    }
+    return { pinnedProjects: pinned, activeProjects: active, archivedProjects: archived }
+  }, [projects])
 
-  const stats = useMemo(
-    () => ({
-      total: searchedProjects.filter(p => !p.isArchived).length,
-      pinned: searchedProjects.filter(project => project.isPinned && !project.isArchived).length,
-      running: searchedProjects.filter(project => project.status === 'running' && !project.isArchived).length,
-      stopped: searchedProjects.filter(project => project.status === 'stopped' && !project.isArchived).length,
-      error: searchedProjects.filter(project => project.status === 'error' && !project.isArchived).length,
-      archived: searchedProjects.filter(project => project.isArchived).length,
-    }),
-    [searchedProjects]
-  )
+  // Seis `filter` sobre la misma lista recorrian los proyectos seis veces (y
+  // creaban seis arrays intermedios) cada vez que cambiaba la busqueda. Una
+  // sola pasada da los mismos numeros.
+  const stats = useMemo(() => {
+    const counters = { total: 0, pinned: 0, running: 0, stopped: 0, error: 0, archived: 0 }
+    for (const project of searchedProjects) {
+      if (project.isArchived) {
+        counters.archived++
+        continue
+      }
+      counters.total++
+      if (project.isPinned) counters.pinned++
+      if (project.status === 'running') counters.running++
+      else if (project.status === 'stopped') counters.stopped++
+      else if (project.status === 'error') counters.error++
+    }
+    return counters
+  }, [searchedProjects])
 
   const handleTogglePin = async (project: Project, e?: React.MouseEvent) => {
     e?.stopPropagation()
@@ -709,17 +724,22 @@ export default function App() {
                 {pinnedProjects.map(project => {
                   const onGithub = isGitHubConnected(project)
                   return (
-                    <button
+                    <div
                       className={`project-nav-item ${selectedId === project.id ? 'selected' : ''}`}
                       key={project.id}
-                      onClick={() => {
-                        setSelectedId(project.id)
-                        setViewMode('local')
-                      }}
                       title={`${project.name} · ${onGithub ? 'Sincronizado con GitHub' : 'Solo en almacenamiento local'}`}
                     >
-                      <StatusDot status={project.status} />
-                      <span className="project-nav-name">{project.name}</span>
+                      <button
+                        type="button"
+                        className="project-nav-open"
+                        onClick={() => {
+                          setSelectedId(project.id)
+                          setViewMode('local')
+                        }}
+                      >
+                        <StatusDot status={project.status} />
+                        <span className="project-nav-name">{project.name}</span>
+                      </button>
                       <button
                         type="button"
                         className="sidebar-pin-btn active"
@@ -734,7 +754,7 @@ export default function App() {
                         <HardDrive size={12} color="var(--text-tertiary)" className="local-indicator-icon" />
                       )}
                       {project.status === 'error' && <AlertTriangle size={13} color="var(--accent-rose)" />}
-                    </button>
+                    </div>
                   )
                 })}
               </div>
@@ -754,17 +774,22 @@ export default function App() {
               {activeProjects.map(project => {
                 const onGithub = isGitHubConnected(project)
                 return (
-                  <button
+                  <div
                     className={`project-nav-item ${selectedId === project.id ? 'selected' : ''}`}
                     key={project.id}
-                    onClick={() => {
-                      setSelectedId(project.id)
-                      setViewMode('local')
-                    }}
                     title={`${project.name} · ${onGithub ? 'Sincronizado con GitHub' : 'Solo en almacenamiento local'}`}
                   >
-                    <StatusDot status={project.status} />
-                    <span className="project-nav-name">{project.name}</span>
+                    <button
+                      type="button"
+                      className="project-nav-open"
+                      onClick={() => {
+                        setSelectedId(project.id)
+                        setViewMode('local')
+                      }}
+                    >
+                      <StatusDot status={project.status} />
+                      <span className="project-nav-name">{project.name}</span>
+                    </button>
                     <button
                       type="button"
                       className="sidebar-pin-btn"
@@ -779,7 +804,7 @@ export default function App() {
                       <HardDrive size={12} color="var(--text-tertiary)" className="local-indicator-icon" />
                     )}
                     {project.status === 'error' && <AlertTriangle size={13} color="var(--accent-rose)" />}
-                  </button>
+                  </div>
                 )
               })}
             </div>
@@ -805,17 +830,22 @@ export default function App() {
                   {archivedProjects.map(project => {
                     const onGithub = isGitHubConnected(project)
                     return (
-                      <button
+                      <div
                         className={`project-nav-item archived ${selectedId === project.id ? 'selected' : ''}`}
                         key={project.id}
-                        onClick={() => {
-                          setSelectedId(project.id)
-                          setViewMode('local')
-                        }}
                         title={`${project.name} (Archivado) · ${onGithub ? 'Sincronizado con GitHub' : 'Solo en almacenamiento local'}`}
                       >
-                        <StatusDot status={project.status} />
-                        <span className="project-nav-name">{project.name}</span>
+                        <button
+                          type="button"
+                          className="project-nav-open"
+                          onClick={() => {
+                            setSelectedId(project.id)
+                            setViewMode('local')
+                          }}
+                        >
+                          <StatusDot status={project.status} />
+                          <span className="project-nav-name">{project.name}</span>
+                        </button>
                         <button
                           type="button"
                           className="sidebar-pin-btn active"
@@ -830,7 +860,7 @@ export default function App() {
                         ) : (
                           <HardDrive size={12} color="var(--text-tertiary)" className="local-indicator-icon" />
                         )}
-                      </button>
+                      </div>
                     )
                   })}
                 </div>

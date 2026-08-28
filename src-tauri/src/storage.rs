@@ -1,6 +1,9 @@
 use crate::domain::{CommandRecord, IdeConfig, IdeSettings, Project, ProjectStatus};
 use rusqlite::{params, Connection, OptionalExtension, Row};
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 pub struct Storage {
     connection: Connection,
@@ -12,6 +15,20 @@ impl Storage {
             std::fs::create_dir_all(parent).map_err(|error| format!("No se pudo crear el directorio de datos: {error}"))?;
         }
         let connection = Connection::open(path).map_err(|error| format!("No se pudo abrir SQLite: {error}"))?;
+        // El binario del servidor MCP abre este mismo fichero, asi que hay dos
+        // procesos escribiendo. Con el journal por defecto y `busy_timeout` a 0,
+        // cualquier solape devuelve «database is locked» de inmediato en vez de
+        // esperar: WAL permite lector+escritor a la vez y el timeout absorbe el
+        // resto.
+        connection
+            .busy_timeout(std::time::Duration::from_secs(5))
+            .map_err(|error| format!("No se pudo configurar el tiempo de espera de SQLite: {error}"))?;
+        connection
+            .pragma_update(None, "journal_mode", "WAL")
+            .map_err(|error| format!("No se pudo activar el modo WAL de SQLite: {error}"))?;
+        connection
+            .pragma_update(None, "synchronous", "NORMAL")
+            .map_err(|error| format!("No se pudo configurar la sincronia de SQLite: {error}"))?;
         let storage = Self { connection };
         storage.migrate()?;
         storage.recover_interrupted_processes()?;
@@ -37,6 +54,7 @@ impl Storage {
               port INTEGER,
               status TEXT NOT NULL DEFAULT 'stopped',
               last_used_at TEXT,
+              disk_size_bytes INTEGER NOT NULL DEFAULT 0,
               tags_json TEXT NOT NULL DEFAULT '[]',
               created_at TEXT NOT NULL,
               last_error TEXT,
@@ -62,9 +80,12 @@ impl Storage {
             ",
         ).map_err(|error| format!("No se pudo crear el esquema SQLite: {error}"))?;
 
-        // Compatibilidad con bases de datos ya existentes
+        // Compatibilidad con bases de datos ya existentes. `ALTER TABLE ADD
+        // COLUMN` falla si la columna ya existe, y ese error se ignora a
+        // proposito: es la forma barata de migrar sin tabla de versiones.
         let _ = self.connection.execute("ALTER TABLE projects ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0", []);
         let _ = self.connection.execute("ALTER TABLE projects ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0", []);
+        let _ = self.connection.execute("ALTER TABLE projects ADD COLUMN disk_size_bytes INTEGER NOT NULL DEFAULT 0", []);
         Ok(())
     }
 
@@ -76,26 +97,17 @@ impl Storage {
         Ok(())
     }
 
+    /// Lectura pura de SQLite. La comprobación de que la carpeta sigue en el
+    /// disco vive en [`mark_unavailable_projects`] porque hace E/S y esta
+    /// función se llama con el mutex del almacenamiento tomado.
     pub fn list_projects(&self) -> Result<Vec<Project>, String> {
         let mut statement = self.connection.prepare("SELECT * FROM projects ORDER BY is_pinned DESC, is_archived ASC, COALESCE(last_used_at, created_at) DESC, name COLLATE NOCASE")
             .map_err(|error| format!("No se pudo consultar proyectos: {error}"))?;
         let rows = statement
             .query_map([], map_project)
             .map_err(|error| format!("No se pudo leer proyectos: {error}"))?;
-        let mut projects = rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("No se pudo convertir proyectos: {error}"))?;
-
-        // Una carpeta ausente no implica que el proyecto deba desaparecer del
-        // registro: basta con un volumen externo desmontado para perder todos
-        // los proyectos que viven en él. Se marca el problema y se deja que el
-        // usuario decida borrarlo desde el detalle.
-        for project in &mut projects {
-            if !Path::new(&project.canonical_path).is_dir() {
-                project.status = ProjectStatus::Error;
-                project.last_error = Some("La carpeta registrada no está disponible en el disco.".into());
-            }
-        }
-        Ok(projects)
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("No se pudo convertir proyectos: {error}"))
     }
 
     pub fn delete_project(&self, id: &str) -> Result<(), String> {
@@ -165,6 +177,17 @@ impl Storage {
             "UPDATE projects SET project_type=?2, frameworks_json=?3, package_manager=?4, dev_command=?5, build_command=?6, test_command=?7, local_url=?8, port=?9, disk_size_bytes=?10 WHERE id=?1",
             params![project.id, project.project_type, json(&project.frameworks), project.package_manager, project.dev_command, project.build_command, project.test_command, project.local_url, project.port, project.disk_size_bytes],
         ).map_err(|error| format!("No se pudo actualizar los metadatos del proyecto: {error}"))?;
+        Ok(())
+    }
+
+    /// Marca un fallo sin tocar `last_used_at`: al contrario que
+    /// [`Self::update_status`], no reordena la lista de proyectos por el simple
+    /// hecho de haber abierto uno cuya carpeta no está disponible.
+    pub fn mark_project_error(&self, id: &str, message: &str) -> Result<(), String> {
+        self.connection.execute(
+            "UPDATE projects SET status='error', last_error=?2 WHERE id=?1",
+            params![id, message],
+        ).map_err(|error| format!("No se pudo marcar el fallo del proyecto: {error}"))?;
         Ok(())
     }
 
@@ -253,6 +276,56 @@ impl Storage {
     }
 }
 
+/// Ventana durante la cual se reutiliza el resultado de comprobar si la carpeta
+/// de un proyecto sigue montada. El sondeo de la interfaz ocurre cada 6 s.
+const AVAILABILITY_TTL: Duration = Duration::from_secs(30);
+
+type AvailabilityCache = HashMap<String, (Instant, bool)>;
+
+fn availability_cache() -> &'static Mutex<AvailabilityCache> {
+    static CACHE: OnceLock<Mutex<AvailabilityCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Marca como «requiere atención» los proyectos cuya carpeta no está montada.
+///
+/// Una carpeta ausente no implica que el proyecto deba desaparecer del
+/// registro: basta con un volumen externo desmontado para perder todos los
+/// proyectos que viven en él. Se marca el problema y se deja que el usuario
+/// decida borrarlo desde el detalle.
+///
+/// Se llama FUERA del mutex del almacenamiento: en un volumen de red o en un
+/// disco dormido cada `is_dir` puede tardar segundos, y hacerlo con el mutex
+/// tomado congelaba el resto de comandos (arrancar, detener, fijar) detrás del
+/// sondeo periódico. El resultado además se memoiza con un TTL corto para no
+/// repetir la E/S en cada sondeo.
+pub fn mark_unavailable_projects(projects: &mut [Project]) {
+    let mut cache = availability_cache().lock().unwrap_or_else(|error| error.into_inner());
+    cache.retain(|_, (captured_at, _)| captured_at.elapsed() < AVAILABILITY_TTL);
+    for project in projects.iter_mut() {
+        let available = match cache.get(&project.canonical_path) {
+            Some((_, available)) => *available,
+            None => {
+                let available = Path::new(&project.canonical_path).is_dir();
+                cache.insert(project.canonical_path.clone(), (Instant::now(), available));
+                available
+            }
+        };
+        if !available {
+            project.status = ProjectStatus::Error;
+            project.last_error = Some("La carpeta registrada no está disponible en el disco.".into());
+        }
+    }
+}
+
+/// Olvida la disponibilidad memoizada. Se llama al registrar, borrar o mover
+/// proyectos para que el siguiente listado refleje el cambio sin esperar el TTL.
+pub fn invalidate_availability_cache() {
+    if let Ok(mut cache) = availability_cache().lock() {
+        cache.clear();
+    }
+}
+
 fn map_project(row: &Row<'_>) -> rusqlite::Result<Project> {
     let frameworks: String = row.get("frameworks_json")?;
     let tags: String = row.get("tags_json")?;
@@ -309,4 +382,104 @@ pub fn validate_ide_command(command: &str) -> Result<(), String> {
         return Err("Ese ejecutable no se permite en la configuración de IDEs.".into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::ProjectStatus;
+    use tempfile::tempdir;
+
+    fn fixture(id: &str, path: &str) -> Project {
+        Project {
+            id: id.into(),
+            name: "fixture".into(),
+            path: path.into(),
+            canonical_path: path.into(),
+            project_type: "Node.js".into(),
+            frameworks: vec!["React".into()],
+            package_manager: Some("pnpm".into()),
+            dev_command: Some("pnpm dev".into()),
+            build_command: None,
+            test_command: None,
+            local_url: None,
+            port: Some(5173),
+            status: ProjectStatus::Stopped,
+            last_used_at: None,
+            disk_size_bytes: 4_096,
+            tags: vec!["web".into()],
+            created_at: "2026-01-01T00:00:00Z".into(),
+            last_error: None,
+            is_pinned: false,
+            is_archived: false,
+        }
+    }
+
+    /// Regresión: el commit que añadió el archivado borró por accidente
+    /// `disk_size_bytes` del `CREATE TABLE`. Las bases existentes ya tenían la
+    /// columna, así que el fallo solo aparecía en una instalación nueva: el
+    /// registro de proyectos fallaba con «table projects has no column named
+    /// disk_size_bytes». Este test crea la base desde cero a propósito.
+    #[test]
+    fn fresh_database_accepts_and_returns_a_project() {
+        let directory = tempdir().expect("tempdir");
+        let storage = Storage::open(&directory.path().join("nested").join("registry.sqlite3")).expect("open storage");
+
+        storage.insert_project(&fixture("p1", directory.path().to_str().expect("path"))).expect("insert project");
+
+        let projects = storage.list_projects().expect("list projects");
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].disk_size_bytes, 4_096);
+        assert_eq!(projects[0].tags, vec!["web".to_string()]);
+        assert!(!projects[0].is_pinned);
+    }
+
+    /// Fijar y archivar son mutuamente excluyentes en la interfaz, y la base es
+    /// la que debe garantizarlo.
+    #[test]
+    fn pinning_clears_archived_and_archiving_clears_pinned() {
+        let directory = tempdir().expect("tempdir");
+        let storage = Storage::open(&directory.path().join("registry.sqlite3")).expect("open storage");
+        storage.insert_project(&fixture("p1", directory.path().to_str().expect("path"))).expect("insert project");
+
+        storage.toggle_project_archive("p1", true).expect("archive");
+        storage.toggle_project_pin("p1", true).expect("pin");
+        let project = storage.get_project("p1").expect("get project");
+        assert!(project.is_pinned && !project.is_archived);
+
+        storage.toggle_project_archive("p1", true).expect("archive again");
+        let project = storage.get_project("p1").expect("get project");
+        assert!(project.is_archived && !project.is_pinned);
+    }
+
+    /// El registro no debe perderse porque el volumen esté desmontado: solo se
+    /// marca el fallo.
+    #[test]
+    fn missing_folder_is_flagged_not_deleted() {
+        let directory = tempdir().expect("tempdir");
+        let storage = Storage::open(&directory.path().join("registry.sqlite3")).expect("open storage");
+        storage.insert_project(&fixture("p1", "/volumen/desmontado/proyecto")).expect("insert project");
+
+        let mut projects = storage.list_projects().expect("list projects");
+        assert_eq!(projects[0].status, ProjectStatus::Stopped, "list_projects no debe hacer E/S");
+
+        invalidate_availability_cache();
+        mark_unavailable_projects(&mut projects);
+        assert_eq!(projects[0].status, ProjectStatus::Error);
+        assert!(projects[0].last_error.is_some());
+        assert_eq!(storage.list_projects().expect("list again").len(), 1, "la fila sigue registrada");
+    }
+
+    /// WAL es lo que permite que el servidor MCP y la app usen el mismo fichero
+    /// a la vez sin «database is locked».
+    #[test]
+    fn opens_the_database_in_wal_mode() {
+        let directory = tempdir().expect("tempdir");
+        let storage = Storage::open(&directory.path().join("registry.sqlite3")).expect("open storage");
+        let mode: String = storage
+            .connection
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .expect("journal mode");
+        assert_eq!(mode.to_lowercase(), "wal");
+    }
 }
