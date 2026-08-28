@@ -105,18 +105,32 @@ impl Storage {
     }
 
     pub fn toggle_project_pin(&self, id: &str, is_pinned: bool) -> Result<bool, String> {
-        self.connection.execute(
-            "UPDATE projects SET is_pinned = ?2 WHERE id = ?1",
-            params![id, if is_pinned { 1 } else { 0 }],
-        ).map_err(|error| format!("No se pudo fijar el proyecto: {error}"))?;
+        if is_pinned {
+            self.connection.execute(
+                "UPDATE projects SET is_pinned = 1, is_archived = 0 WHERE id = ?1",
+                params![id],
+            ).map_err(|error| format!("No se pudo fijar el proyecto: {error}"))?;
+        } else {
+            self.connection.execute(
+                "UPDATE projects SET is_pinned = 0 WHERE id = ?1",
+                params![id],
+            ).map_err(|error| format!("No se pudo desfijar el proyecto: {error}"))?;
+        }
         Ok(is_pinned)
     }
 
     pub fn toggle_project_archive(&self, id: &str, is_archived: bool) -> Result<bool, String> {
-        self.connection.execute(
-            "UPDATE projects SET is_archived = ?2 WHERE id = ?1",
-            params![id, if is_archived { 1 } else { 0 }],
-        ).map_err(|error| format!("No se pudo archivar el proyecto: {error}"))?;
+        if is_archived {
+            self.connection.execute(
+                "UPDATE projects SET is_archived = 1, is_pinned = 0 WHERE id = ?1",
+                params![id],
+            ).map_err(|error| format!("No se pudo archivar el proyecto: {error}"))?;
+        } else {
+            self.connection.execute(
+                "UPDATE projects SET is_archived = 0 WHERE id = ?1",
+                params![id],
+            ).map_err(|error| format!("No se pudo desarchivar el proyecto: {error}"))?;
+        }
         Ok(is_archived)
     }
 

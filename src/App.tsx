@@ -345,10 +345,21 @@ export default function App() {
     e?.stopPropagation()
     const nextState = !project.isPinned
     setProjects(prev =>
-      prev.map(p => (p.id === project.id ? { ...p, isPinned: nextState } : p))
+      prev.map(p =>
+        p.id === project.id
+          ? { ...p, isPinned: nextState, isArchived: nextState ? false : p.isArchived }
+          : p
+      )
     )
     if (detail && detail.project.id === project.id) {
-      setDetail({ ...detail, project: { ...detail.project, isPinned: nextState } })
+      setDetail({
+        ...detail,
+        project: {
+          ...detail.project,
+          isPinned: nextState,
+          isArchived: nextState ? false : detail.project.isArchived,
+        },
+      })
     }
     try {
       await api.togglePinProject(project.id, nextState)
@@ -366,17 +377,33 @@ export default function App() {
   const handleToggleArchive = async (project: Project, e?: React.MouseEvent) => {
     e?.stopPropagation()
     const nextState = !project.isArchived
+    if (nextState) {
+      setShowArchivedSidebar(true)
+    }
     setProjects(prev =>
-      prev.map(p => (p.id === project.id ? { ...p, isArchived: nextState } : p))
+      prev.map(p =>
+        p.id === project.id
+          ? { ...p, isArchived: nextState, isPinned: nextState ? false : p.isPinned }
+          : p
+      )
     )
     if (detail && detail.project.id === project.id) {
-      setDetail({ ...detail, project: { ...detail.project, isArchived: nextState } })
+      setDetail({
+        ...detail,
+        project: {
+          ...detail.project,
+          isArchived: nextState,
+          isPinned: nextState ? false : detail.project.isPinned,
+        },
+      })
     }
     try {
       await api.toggleArchiveProject(project.id, nextState)
       setNotice({
         kind: 'success',
-        text: nextState ? `«${project.name}» archivado.` : `«${project.name}» restaurado de archivados.`,
+        text: nextState
+          ? `«${project.name}» archivado. Puedes encontrarlo en la pestaña "Archivados" o en la barra lateral.`
+          : `«${project.name}» restaurado a proyectos activos.`,
       })
       await loadProjects()
     } catch (error) {
@@ -1174,7 +1201,10 @@ function ProjectWorkspace({
               <button
                 type="button"
                 className={`archive-btn ${project.isArchived ? 'archived' : ''}`}
-                onClick={() => onToggleArchive(project)}
+                onClick={() => {
+                  if (project.isPinned) onTogglePin(project)
+                  onToggleArchive(project)
+                }}
                 title={project.isArchived ? 'Restaurar proyecto de archivados' : 'Archivar proyecto'}
               >
                 {project.isArchived ? <ArchiveRestore size={13} /> : <Archive size={13} />}
@@ -1213,6 +1243,41 @@ function ProjectWorkspace({
             </p>
           </div>
         </div>
+
+        {project.isArchived && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              padding: '10px 16px',
+              marginTop: 14,
+              marginBottom: 6,
+              background: 'rgba(99, 102, 241, 0.08)',
+              border: '1px solid rgba(99, 102, 241, 0.25)',
+              borderRadius: 'var(--radius-md, 8px)',
+              color: 'var(--text-secondary)',
+              fontSize: '0.85rem',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <Archive size={16} color="var(--accent-indigo)" />
+              <span>
+                Este proyecto está <strong>archivado</strong>. Está oculto de la lista activa de tu panel.
+              </span>
+            </div>
+            <button
+              type="button"
+              className="secondary"
+              style={{ padding: '4px 12px', fontSize: 12, height: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}
+              onClick={() => onToggleArchive(project)}
+            >
+              <ArchiveRestore size={13} /> Desarchivar
+            </button>
+          </div>
+        )}
+
         <div className="run-actions">
           {isRunning ? (
             <>
