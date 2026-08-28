@@ -11,7 +11,7 @@ pub mod storage;
 use crate::domain::{
     CleanupPreview, CleanupRequest, CloneRepoRequest, GitActionResult, GitStatusInfo,
     GitHubAccountStatus, GitHubRepo, IdeSettings, PortInfo, ProcessInfo, Project,
-    ProjectDetail, ProjectStatus, PublishToGitHubRequest, RegisterProjectRequest,
+    ProjectDetail, ProjectKind, ProjectStatus, PublishToGitHubRequest, RegisterProjectRequest,
     RunProjectRequest, SafeOffloadResult,
 };
 use crate::process::ProcessManager;
@@ -64,7 +64,7 @@ fn register_project(request: RegisterProjectRequest, state: tauri::State<'_, App
         .unwrap_or_else(|| root.file_name().and_then(|name| name.to_str()).unwrap_or("Proyecto sin nombre").to_string());
     let mut project = Project {
         id: Uuid::new_v4().to_string(), name: name.trim().to_string(), path, canonical_path,
-        project_type: scan.project_type, frameworks: scan.frameworks, package_manager: scan.package_manager,
+        project_type: scan.project_type, kind: scan.kind, kind_override: None, frameworks: scan.frameworks, package_manager: scan.package_manager,
         dev_command: scan.dev_command, build_command: scan.build_command, test_command: scan.test_command,
         local_url: scan.local_url, port: scan.port, status: ProjectStatus::Stopped, last_used_at: None,
         disk_size_bytes: report.total_bytes, tags: request.tags.into_iter().map(|tag| tag.trim().to_string()).filter(|tag| !tag.is_empty()).collect(),
@@ -129,6 +129,7 @@ fn refresh_project(project_id: String, state: tauri::State<'_, AppState>) -> Res
     let scan = scan_project(&root)?;
     let report = disk::disk_report(&project_id, &root)?;
     project.project_type = scan.project_type;
+    project.kind = scan.kind;
     project.frameworks = scan.frameworks;
     project.package_manager = scan.package_manager;
     project.dev_command = scan.dev_command;
@@ -155,6 +156,7 @@ fn refresh_all_projects(state: tauri::State<'_, AppState>) -> Result<Vec<Project
         let Ok(root) = trusted_project_root(&project) else { continue };
         let Ok(scan) = scan_project(&root) else { continue };
         project.project_type = scan.project_type;
+        project.kind = scan.kind;
         project.frameworks = scan.frameworks;
         project.package_manager = scan.package_manager;
         project.dev_command = scan.dev_command;
@@ -202,6 +204,26 @@ fn unregister_project(project_id: String, state: tauri::State<'_, AppState>) -> 
 #[tauri::command(async)]
 fn toggle_pin_project(project_id: String, is_pinned: bool, state: tauri::State<'_, AppState>) -> Result<bool, String> {
     state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.toggle_project_pin(&project_id, is_pinned)
+}
+
+/// Fija la naturaleza del proyecto a mano, o vuelve a la deducida con `None`.
+/// Ningun clasificador automatico acierta siempre: hay scripts que arrancan un
+/// servidor y monorepos que si tienen algo ejecutable en la raiz.
+#[tauri::command(async)]
+fn set_project_kind(project_id: String, kind: Option<String>, state: tauri::State<'_, AppState>) -> Result<Project, String> {
+    let parsed = match kind.as_deref() {
+        None | Some("") | Some("auto") => None,
+        Some(value) => {
+            let parsed = ProjectKind::from_db(value);
+            if parsed.as_str() != value {
+                return Err(format!("Naturaleza de proyecto no reconocida: «{value}»."));
+            }
+            Some(parsed)
+        }
+    };
+    let storage = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?;
+    storage.set_project_kind_override(&project_id, parsed)?;
+    storage.get_project(&project_id)
 }
 
 #[tauri::command(async)]
@@ -708,7 +730,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            list_projects, register_project, unregister_project, delete_project, toggle_pin_project, toggle_archive_project, get_project_detail, refresh_project, refresh_all_projects, run_project, stop_project, restart_project,
+            list_projects, register_project, unregister_project, delete_project, toggle_pin_project, toggle_archive_project, set_project_kind, get_project_detail, refresh_project, refresh_all_projects, run_project, stop_project, restart_project,
             get_disk_report, preview_cleanup, clean_project, get_ide_settings, save_ide_settings, launch_project_tool,
             open_project_url, open_external_url, inspect_project_port,
             get_github_status, save_github_token, list_github_repos, clone_github_repo, safe_offload_project,

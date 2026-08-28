@@ -1,4 +1,4 @@
-use crate::domain::{CommandSpec, DeclaredDependency, DetectedScript, ProjectScan};
+use crate::domain::{CommandSpec, DeclaredDependency, DetectedScript, ProjectScan, ProjectKind};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -236,12 +236,12 @@ pub fn scan_project(path: &Path) -> Result<ProjectScan, String> {
             if scan.dev_command.is_none() { scan.dev_command = Some("flask run".into()); }
             if scan.port.is_none() { scan.port = Some(5000); }
         } else if let Some(entrypoint) = python_entrypoint(path) {
-            // Un script suelto tambien es un proyecto ejecutable. Sin este caso
-            // los proyectos Python sin framework se quedaban sin ningun script
-            // detectado y el boton de arranque respondia «No se detecto un
-            // script ejecutable para dev».
+            // Un script suelto tambien es un proyecto ejecutable, pero NO es un
+            // servidor: se registra como tarea con su propio nombre, no como
+            // `dev`. Asi el panel no le ofrece «arrancar el servidor de
+            // desarrollo» ni le inventa un puerto.
             let command = format!("python {entrypoint}");
-            scan.scripts.push(DetectedScript { name: "dev".into(), command: command.clone(), source: entrypoint.clone() });
+            scan.scripts.push(DetectedScript { name: entrypoint.clone(), command: command.clone(), source: entrypoint.clone() });
             if scan.dev_command.is_none() { scan.dev_command = Some(command); }
         }
     }
@@ -511,8 +511,60 @@ pub fn scan_project(path: &Path) -> Result<ProjectScan, String> {
         }
     }
 
+    scan.kind = derive_project_kind(path, &scan);
+
+    // Un cuaderno se abre con Jupyter, y Jupyter si es un servidor: se registra
+    // su tarea y su puerto solo cuando el proyecto es de esa naturaleza.
+    if scan.kind == ProjectKind::Notebook {
+        scan.scripts.push(DetectedScript { name: "notebook".into(), command: "jupyter lab".into(), source: "Jupyter".into() });
+        if scan.dev_command.is_none() { scan.dev_command = Some("jupyter lab".into()); }
+        if scan.port.is_none() { scan.port = Some(8888); }
+    }
+
+    // Un script de una pasada no tiene URL local aunque el detector le haya
+    // adivinado un puerto por el camino.
+    if scan.kind == ProjectKind::Script || scan.kind == ProjectKind::Inert {
+        scan.port = None;
+    }
+
     if let Some(port) = scan.port { scan.local_url = Some(format!("http://localhost:{port}")); }
     Ok(scan)
+}
+
+/// Marcos que implican un servidor de larga duracion.
+const SERVER_FRAMEWORKS: &[&str] = &[
+    "Next.js", "Nuxt", "Remix", "Astro", "Vite", "Svelte", "SvelteKit", "Angular", "Expo",
+    "React Native", "Django", "FastAPI", "Flask", "Streamlit", "NestJS", "Express", "Fastify",
+    "Laravel", "Tauri",
+];
+
+/// Deduce como debe tratarse el proyecto. Es una derivacion de lo ya detectado,
+/// no una deteccion nueva; el usuario puede corregirla y su eleccion manda.
+pub fn derive_project_kind(path: &Path, scan: &ProjectScan) -> ProjectKind {
+    let has_framework = |name: &str| scan.frameworks.iter().any(|framework| framework == name);
+    let has_script = |name: &str| scan.scripts.iter().any(|script| script.name == name);
+
+    // Un servidor se reconoce por su marco o por tener un script de arranque
+    // propio: eso es lo que hace que «en ejecucion» y la URL signifiquen algo.
+    if SERVER_FRAMEWORKS.iter().any(|framework| has_framework(framework))
+        || DEV_SCRIPT_PREFERENCE.iter().any(|name| has_script(name))
+    {
+        return ProjectKind::Service;
+    }
+
+    // Los cuadernos van antes que el script suelto: un repo de analisis puede
+    // tener ademas un `.py` de utilidades y lo que se quiere abrir es Jupyter.
+    if has_framework("Jupyter") {
+        return ProjectKind::Notebook;
+    }
+
+    if python_entrypoint(path).is_some() {
+        return ProjectKind::Script;
+    }
+
+    // Queda lo que no se puede ejecutar desde la raiz: repos de documentacion y
+    // monorepos cuyas apps viven en subcarpetas.
+    ProjectKind::Inert
 }
 
 pub fn is_port_in_use(port: u16) -> bool {
@@ -719,6 +771,13 @@ fn python_script_to_spec(root: &Path, scan: &ProjectScan, script_name: &str) -> 
     let py_bin = find_python_executable(root);
     let is_uv = scan.package_manager.as_deref() == Some("uv") && py_bin == "python3";
     let mut command_spec = match script_name {
+        "notebook" => {
+            if is_uv {
+                spec("uv", &["run", "jupyter", "lab"])
+            } else {
+                spec(&py_bin, &["-m", "jupyter", "lab"])
+            }
+        }
         "dev" => {
             if scan.frameworks.iter().any(|f| f == "Django") {
                 if is_uv {
@@ -822,6 +881,7 @@ pub fn command_for_action_on_port(
     }
     let script = match action {
         "dev" => DEV_SCRIPT_PREFERENCE.iter().find_map(|candidate| scan.scripts.iter().find(|script| script.name == *candidate)),
+        "notebook" => scan.scripts.iter().find(|script| script.name == "notebook"),
         "build" | "test" | "lint" | "format" | "typecheck" => scan.scripts.iter().find(|script| script.name == action),
         "script" => requested_script.and_then(|name| scan.scripts.iter().find(|script| script.name == name)),
         _ => return Err("Acción no admitida. Solo se ejecutan scripts detectados o instalaciones del gestor detectado.".into()),
@@ -1255,23 +1315,65 @@ mod tests {
         assert_eq!(scan.port, Some(1420));
     }
 
-    /// Regresión: un proyecto Python sin framework no registraba ningún script,
-    /// así que el botón de arranque respondía «No se detectó un script
-    /// ejecutable para dev» aunque tuviera un punto de entrada evidente.
+    /// Un proyecto Python sin framework es una TAREA, no un servidor: su punto de
+    /// entrada se registra con su propio nombre —no como `dev`— para que el panel
+    /// no le ofrezca «arrancar el servidor de desarrollo» ni le invente un
+    /// puerto. Antes no registraba nada y el botón no hacía nada.
     #[test]
     fn runs_a_plain_python_project_by_its_entrypoint() {
         let directory = tempdir().expect("tempdir");
         fs::write(directory.path().join("requirements.txt"), "requests==2.32.0\n").expect("requirements");
         fs::write(directory.path().join("app.py"), "print('hola')").expect("app");
         let scan = scan_project(directory.path()).expect("scan");
+
+        assert_eq!(scan.kind, ProjectKind::Script);
         assert_eq!(scan.dev_command.as_deref(), Some("python app.py"));
-        let command = command_for_action(directory.path(), &scan, "dev", None).expect("command");
+        assert_eq!(scan.port, None, "una tarea de una pasada no tiene puerto");
+        assert_eq!(scan.local_url, None);
+        assert!(command_for_action(directory.path(), &scan, "dev", None).is_err(), "no debe existir un servidor de desarrollo");
+
+        let command = command_for_action(directory.path(), &scan, "script", Some("app.py")).expect("command");
         assert!(command.args.iter().any(|arg| arg == "app.py"), "debe lanzar app.py, no un main.py inexistente: {:?}", command.args);
 
         // Con `main.py` presente, gana la convención habitual.
         fs::write(directory.path().join("main.py"), "print('hola')").expect("main");
         let scan = scan_project(directory.path()).expect("scan");
         assert_eq!(scan.dev_command.as_deref(), Some("python main.py"));
+    }
+
+    /// Cada naturaleza se deduce de lo que ya se detectó, y decide qué acciones
+    /// tiene sentido ofrecer.
+    #[test]
+    fn classifies_projects_by_what_they_actually_are() {
+        // Servicio: un marco de servidor.
+        let service = tempdir().expect("tempdir");
+        fs::write(service.path().join("package.json"), r#"{"scripts":{"dev":"next dev"},"dependencies":{"next":"15"}}"#).expect("package");
+        let scan = scan_project(service.path()).expect("scan");
+        assert_eq!(scan.kind, ProjectKind::Service);
+        assert_eq!(scan.port, Some(3000));
+
+        // Cuaderno: la acción útil es abrir Jupyter, y Jupyter sí es un servidor.
+        let notebook = tempdir().expect("tempdir");
+        fs::write(notebook.path().join("analisis.ipynb"), "{}").expect("notebook");
+        fs::write(notebook.path().join("requirements.txt"), "pandas\n").expect("requirements");
+        let scan = scan_project(notebook.path()).expect("scan");
+        assert_eq!(scan.kind, ProjectKind::Notebook);
+        assert_eq!(scan.port, Some(8888));
+        let command = command_for_action(notebook.path(), &scan, "notebook", None).expect("command");
+        assert!(command.display.contains("jupyter"), "{}", command.display);
+
+        // Un cuaderno con un `.py` de utilidades sigue siendo un cuaderno.
+        fs::write(notebook.path().join("utilidades.py"), "x = 1").expect("utils");
+        assert_eq!(scan_project(notebook.path()).expect("scan").kind, ProjectKind::Notebook);
+
+        // Sin nada ejecutable en la raíz: ni arranque ni puerto.
+        let inert = tempdir().expect("tempdir");
+        fs::write(inert.path().join("README.md"), "# docs").expect("readme");
+        fs::create_dir(inert.path().join("docs")).expect("docs");
+        let scan = scan_project(inert.path()).expect("scan");
+        assert_eq!(scan.kind, ProjectKind::Inert);
+        assert_eq!(scan.dev_command, None);
+        assert_eq!(scan.port, None);
     }
 
     #[test]

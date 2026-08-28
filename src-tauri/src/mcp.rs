@@ -382,7 +382,7 @@ impl DevCommandCenterMcp {
             let name = request.name.filter(|name| !name.trim().is_empty()).unwrap_or_else(|| root.file_name().and_then(|value| value.to_str()).unwrap_or("Proyecto sin nombre").to_string());
             let mut project = Project {
                 id: Uuid::new_v4().to_string(), name: name.trim().to_string(), path: requested_path.to_string_lossy().to_string(), canonical_path: root.to_string_lossy().to_string(),
-                project_type: scan.project_type, frameworks: scan.frameworks, package_manager: scan.package_manager, dev_command: scan.dev_command, build_command: scan.build_command, test_command: scan.test_command,
+                project_type: scan.project_type, kind: scan.kind, kind_override: None, frameworks: scan.frameworks, package_manager: scan.package_manager, dev_command: scan.dev_command, build_command: scan.build_command, test_command: scan.test_command,
                 local_url: scan.local_url, port: scan.port, status: ProjectStatus::Stopped, last_used_at: None, disk_size_bytes: report.total_bytes,
                 tags: request.tags.unwrap_or_default().into_iter().map(|tag| tag.trim().to_string()).filter(|tag| !tag.is_empty()).collect(), created_at: Utc::now().to_rfc3339(), last_error: None,
                 is_pinned: false, is_archived: false,

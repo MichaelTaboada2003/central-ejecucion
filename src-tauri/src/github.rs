@@ -475,6 +475,8 @@ impl GitHubService {
             path: destination.to_string_lossy().to_string(),
             canonical_path: canonical.to_string_lossy().to_string(),
             project_type: scan.project_type,
+            kind: scan.kind,
+            kind_override: None,
             frameworks: scan.frameworks,
             package_manager: scan.package_manager,
             dev_command: scan.dev_command,

@@ -1,4 +1,4 @@
-use crate::domain::{CommandRecord, IdeConfig, IdeSettings, Project, ProjectStatus};
+use crate::domain::{CommandRecord, IdeConfig, IdeSettings, Project, ProjectKind, ProjectStatus};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use std::collections::HashMap;
 use std::path::Path;
@@ -59,7 +59,9 @@ impl Storage {
               created_at TEXT NOT NULL,
               last_error TEXT,
               is_pinned INTEGER NOT NULL DEFAULT 0,
-              is_archived INTEGER NOT NULL DEFAULT 0
+              is_archived INTEGER NOT NULL DEFAULT 0,
+              kind TEXT NOT NULL DEFAULT 'service',
+              kind_override TEXT
             );
             CREATE TABLE IF NOT EXISTS command_history (
               id TEXT PRIMARY KEY,
@@ -86,6 +88,8 @@ impl Storage {
         let _ = self.connection.execute("ALTER TABLE projects ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0", []);
         let _ = self.connection.execute("ALTER TABLE projects ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0", []);
         let _ = self.connection.execute("ALTER TABLE projects ADD COLUMN disk_size_bytes INTEGER NOT NULL DEFAULT 0", []);
+        let _ = self.connection.execute("ALTER TABLE projects ADD COLUMN kind TEXT NOT NULL DEFAULT 'service'", []);
+        let _ = self.connection.execute("ALTER TABLE projects ADD COLUMN kind_override TEXT", []);
         Ok(())
     }
 
@@ -156,14 +160,15 @@ impl Storage {
 
     pub fn insert_project(&self, project: &Project) -> Result<(), String> {
         self.connection.execute(
-            "INSERT INTO projects (id, name, path, canonical_path, project_type, frameworks_json, package_manager, dev_command, build_command, test_command, local_url, port, status, last_used_at, disk_size_bytes, tags_json, created_at, last_error, is_pinned, is_archived)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+            "INSERT INTO projects (id, name, path, canonical_path, project_type, frameworks_json, package_manager, dev_command, build_command, test_command, local_url, port, status, last_used_at, disk_size_bytes, tags_json, created_at, last_error, is_pinned, is_archived, kind, kind_override)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
             params![
                 project.id, project.name, project.path, project.canonical_path, project.project_type,
                 json(&project.frameworks), project.package_manager, project.dev_command, project.build_command,
                 project.test_command, project.local_url, project.port, project.status.as_str(), project.last_used_at,
                 project.disk_size_bytes, json(&project.tags), project.created_at, project.last_error,
                 if project.is_pinned { 1 } else { 0 }, if project.is_archived { 1 } else { 0 },
+                project.kind.as_str(), project.kind_override.map(|kind| kind.as_str()),
             ],
         ).map_err(|error| {
             if error.to_string().contains("UNIQUE") { "Esta carpeta ya está registrada usando su ruta canónica.".into() }
@@ -174,9 +179,18 @@ impl Storage {
 
     pub fn refresh_project_metadata(&self, project: &Project) -> Result<(), String> {
         self.connection.execute(
-            "UPDATE projects SET project_type=?2, frameworks_json=?3, package_manager=?4, dev_command=?5, build_command=?6, test_command=?7, local_url=?8, port=?9, disk_size_bytes=?10 WHERE id=?1",
-            params![project.id, project.project_type, json(&project.frameworks), project.package_manager, project.dev_command, project.build_command, project.test_command, project.local_url, project.port, project.disk_size_bytes],
+            "UPDATE projects SET project_type=?2, frameworks_json=?3, package_manager=?4, dev_command=?5, build_command=?6, test_command=?7, local_url=?8, port=?9, disk_size_bytes=?10, kind=?11 WHERE id=?1",
+            params![project.id, project.project_type, json(&project.frameworks), project.package_manager, project.dev_command, project.build_command, project.test_command, project.local_url, project.port, project.disk_size_bytes, project.kind.as_str()],
         ).map_err(|error| format!("No se pudo actualizar los metadatos del proyecto: {error}"))?;
+        Ok(())
+    }
+
+    /// Guarda —o borra, con `None`— la naturaleza forzada por el usuario.
+    pub fn set_project_kind_override(&self, id: &str, kind: Option<ProjectKind>) -> Result<(), String> {
+        self.connection.execute(
+            "UPDATE projects SET kind_override = ?2 WHERE id = ?1",
+            params![id, kind.map(|value| value.as_str())],
+        ).map_err(|error| format!("No se pudo guardar la naturaleza del proyecto: {error}"))?;
         Ok(())
     }
 
@@ -339,6 +353,8 @@ fn map_project(row: &Row<'_>) -> rusqlite::Result<Project> {
         tags: serde_json::from_str(&tags).unwrap_or_default(), created_at: row.get("created_at")?, last_error: row.get("last_error")?,
         is_pinned: is_pinned != 0,
         is_archived: is_archived != 0,
+        kind: row.get::<_, String>("kind").map(|value| ProjectKind::from_db(&value)).unwrap_or_default(),
+        kind_override: row.get::<_, Option<String>>("kind_override").unwrap_or(None).map(|value| ProjectKind::from_db(&value)),
     })
 }
 
@@ -412,6 +428,8 @@ mod tests {
             last_error: None,
             is_pinned: false,
             is_archived: false,
+            kind: ProjectKind::Service,
+            kind_override: None,
         }
     }
 
@@ -468,6 +486,37 @@ mod tests {
         assert_eq!(projects[0].status, ProjectStatus::Error);
         assert!(projects[0].last_error.is_some());
         assert_eq!(storage.list_projects().expect("list again").len(), 1, "la fila sigue registrada");
+    }
+
+    /// La naturaleza deducida se guarda, y la forzada por el usuario manda sobre
+    /// ella sin perderse en el siguiente reescaneo.
+    #[test]
+    fn a_forced_kind_wins_over_the_detected_one() {
+        let directory = tempdir().expect("tempdir");
+        let storage = Storage::open(&directory.path().join("registry.sqlite3")).expect("open storage");
+        let mut project = fixture("p1", directory.path().to_str().expect("path"));
+        project.kind = ProjectKind::Script;
+        storage.insert_project(&project).expect("insert project");
+
+        let stored = storage.get_project("p1").expect("get project");
+        assert_eq!(stored.kind, ProjectKind::Script);
+        assert_eq!(stored.effective_kind(), ProjectKind::Script);
+
+        storage.set_project_kind_override("p1", Some(ProjectKind::Service)).expect("override");
+        let stored = storage.get_project("p1").expect("get project");
+        assert_eq!(stored.kind, ProjectKind::Script, "la deducida no se pisa");
+        assert_eq!(stored.effective_kind(), ProjectKind::Service);
+
+        // Un reescaneo reescribe la deducida y deja intacta la eleccion manual.
+        let mut rescanned = stored.clone();
+        rescanned.kind = ProjectKind::Inert;
+        storage.refresh_project_metadata(&rescanned).expect("refresh");
+        let stored = storage.get_project("p1").expect("get project");
+        assert_eq!(stored.kind, ProjectKind::Inert);
+        assert_eq!(stored.effective_kind(), ProjectKind::Service);
+
+        storage.set_project_kind_override("p1", None).expect("clear override");
+        assert_eq!(storage.get_project("p1").expect("get").effective_kind(), ProjectKind::Inert);
     }
 
     /// WAL es lo que permite que el servidor MCP y la app usen el mismo fichero

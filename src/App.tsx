@@ -12,7 +12,7 @@ import { api, isTauri, mockLogs } from './api'
 import type {
   CleanupPreview, DiskReport, GitStatusInfo,
   GitHubAccountStatus, GitHubRepo, IdeSettings, LogEntry, ProcessInfo,
-  Project, ProjectDetail, ProjectStatus,
+  Project, ProjectDetail, ProjectKind, ProjectStatus,
 } from './types'
 import './App.css'
 
@@ -65,6 +65,35 @@ const TerminalLine = memo(function TerminalLine({ entry }: { entry: TerminalEntr
     </p>
   )
 })
+
+/** Naturaleza que manda: la elegida a mano si la hay, y `service` para las filas
+ *  de bases anteriores a que el campo existiera. */
+function projectKind(project: Project): ProjectKind {
+  return project.kindOverride ?? project.kind ?? 'service'
+}
+
+const kindMeta: Record<ProjectKind, { label: string; hint: string; icon: typeof LayoutDashboard }> = {
+  service: {
+    label: 'Servicio',
+    hint: 'Servidor de larga duración: se arranca, se detiene y se abre en el navegador.',
+    icon: Radio,
+  },
+  script: {
+    label: 'Script',
+    hint: 'Tarea de una pasada: importa cómo termina y cuánto tarda, no un puerto.',
+    icon: FileCode2,
+  },
+  notebook: {
+    label: 'Notebook',
+    hint: 'Cuadernos Jupyter: la acción útil es abrir Jupyter Lab en esta carpeta.',
+    icon: Box,
+  },
+  inert: {
+    label: 'Sin ejecutable',
+    hint: 'No hay nada que arrancar en la raíz. Útil para repos de documentación y monorepos cuyas apps viven en subcarpetas.',
+    icon: Folder,
+  },
+}
 
 const statusLabels: Record<ProjectStatus | 'pinned' | 'archived', string> = {
   running: 'En ejecución',
@@ -391,6 +420,29 @@ export default function App() {
     }
   }
 
+  // La naturaleza forzada se guarda al instante: es un desplegable, no un
+  // formulario, y el usuario debe ver el cambio en los botones de inmediato.
+  const handleKindChange = async (project: Project, kind: ProjectKind | null) => {
+    try {
+      const updated = await api.setProjectKind(project.id, kind)
+      setProjects(prev => prev.map(p => (p.id === project.id ? { ...p, ...updated } : p)))
+      setDetail(current =>
+        current && current.project.id === project.id
+          ? { ...current, project: { ...current.project, ...updated } }
+          : current
+      )
+      projectsSignature.current = ''
+      setNotice({
+        kind: 'success',
+        text: kind
+          ? `«${project.name}» se tratará como ${kindMeta[kind].label.toLowerCase()}.`
+          : `«${project.name}» vuelve a la naturaleza deducida automáticamente.`,
+      })
+    } catch (error) {
+      showError(error)
+    }
+  }
+
   const handleToggleArchive = async (project: Project, e?: React.MouseEvent) => {
     e?.stopPropagation()
     const nextState = !project.isArchived
@@ -443,7 +495,7 @@ export default function App() {
   }
 
   const handleRun = (
-    actionName: 'dev' | 'build' | 'test' | 'lint' | 'format' | 'typecheck' | 'install' | 'script',
+    actionName: 'dev' | 'build' | 'test' | 'lint' | 'format' | 'typecheck' | 'install' | 'script' | 'notebook',
     script?: string
   ) => {
     if (!detail) return
@@ -972,6 +1024,7 @@ export default function App() {
               onDeleteProject={setDeleteCandidate}
               onTogglePin={handleTogglePin}
               onToggleArchive={handleToggleArchive}
+              onKindChange={handleKindChange}
             />
           ) : viewMode === 'github' ? (
             <GitHubHubView
@@ -1140,6 +1193,7 @@ function ProjectWorkspace({
   onDeleteProject,
   onTogglePin,
   onToggleArchive,
+  onKindChange,
 }: {
   detail: ProjectDetail
   gitHubRepo?: GitHubRepo
@@ -1151,7 +1205,7 @@ function ProjectWorkspace({
   busy: string | null
   onBack: () => void
   onRun: (
-    action: 'dev' | 'build' | 'test' | 'lint' | 'format' | 'typecheck' | 'install' | 'script',
+    action: 'dev' | 'build' | 'test' | 'lint' | 'format' | 'typecheck' | 'install' | 'script' | 'notebook',
     script?: string
   ) => Promise<void> | undefined
   onStop: () => void
@@ -1165,10 +1219,47 @@ function ProjectWorkspace({
   onDeleteProject: (project: Project) => void
   onTogglePin: (project: Project) => void
   onToggleArchive: (project: Project) => void
+  onKindChange: (project: Project, kind: ProjectKind | null) => Promise<void> | void
 }) {
   const { project, scan, process, recentCommands } = detail
   const isRunning = project.status === 'running'
   const isMissingDeps = !scan.installedDependencies && scan.declaredDependencies > 0
+  const kind = projectKind(project)
+  // Un script se lanza como la tarea que es, con su propio nombre; sólo un
+  // servicio tiene un `dev` que arrancar.
+  const primaryAction = useMemo<{ action: 'dev' | 'script' | 'notebook'; script?: string; label: string; title: string } | null>(() => {
+    if (kind === 'inert') return null
+    if (kind === 'notebook') {
+      const hasNotebook = scan.scripts.some(script => script.name === 'notebook')
+      return hasNotebook
+        ? { action: 'notebook', label: 'Abrir Jupyter Lab', title: 'jupyter lab' }
+        : null
+    }
+    if (kind === 'script') {
+      // El detector registra el punto de entrada con su propio nombre, pero la
+      // naturaleza tambien se puede forzar a mano sobre cualquier proyecto: se
+      // busca la tarea que corresponde al comando principal antes de adivinar.
+      const task =
+        scan.scripts.find(script => script.command === scan.devCommand) ??
+        scan.scripts.find(script => script.source === script.name) ??
+        scan.scripts.find(script => script.name.endsWith('.py')) ??
+        scan.scripts[0]
+      if (!task) return null
+      const isFile = task.name.includes('.')
+      return {
+        action: 'script',
+        script: task.name,
+        label: isFile ? `Ejecutar ${task.name}` : 'Ejecutar',
+        title: task.command,
+      }
+    }
+    return scan.devCommand ? { action: 'dev', label: 'Run', title: scan.devCommand } : null
+  }, [kind, scan.scripts, scan.devCommand])
+  const servesOverHttp = kind === 'service' || kind === 'notebook'
+  // Aunque no haya nada que lanzar, el boton deshabilitado debe seguir hablando
+  // el idioma de la naturaleza en vez de un «Ejecutar» genérico.
+  const fallbackActionLabel = kind === 'notebook' ? 'Abrir Jupyter Lab' : kind === 'service' ? 'Run' : 'Ejecutar'
+  const KindIcon = kindMeta[kind].icon
   const toolButtons = [
     ['finder', 'Finder', FolderOpen],
     ['terminal', 'Terminal', SquareTerminal],
@@ -1190,7 +1281,7 @@ function ProjectWorkspace({
           <button className="secondary" onClick={onRefresh} disabled={!!busy}>
             <RefreshCw size={15} className={busy === 'refresh' ? 'spin' : ''} /> Actualizar
           </button>
-          {project.localUrl && (
+          {project.localUrl && servesOverHttp && (
             <button
               className="secondary"
               onClick={onOpenUrl}
@@ -1245,6 +1336,15 @@ function ProjectWorkspace({
             </div>
             <p style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <span>{project.projectType}</span>
+              <span>·</span>
+              <span
+                className={`kind-badge ${kind}`}
+                title={`${kindMeta[kind].hint}${project.kindOverride ? ' (fijado a mano)' : ' Se puede cambiar en Configuración.'}`}
+              >
+                <KindIcon size={11} />
+                {kindMeta[kind].label}
+                {project.kindOverride ? <Lock size={9} /> : null}
+              </span>
               <span>·</span>
               {gitHubRepo ? (
                 // Dentro del webview de Tauri un enlace con `target="_blank"` no
@@ -1310,39 +1410,48 @@ function ProjectWorkspace({
           </div>
         )}
 
+        {/* La acción principal depende de la naturaleza del proyecto: un script
+            de una pasada no tiene un «servidor de desarrollo» que arrancar, y un
+            repo sin nada ejecutable no tiene acción ninguna. */}
         <div className="run-actions">
-          {isRunning ? (
+          {kind === 'inert' ? (
+            <span className="kind-inert-note" title={kindMeta.inert.hint}>
+              <Folder size={14} /> Sin nada que ejecutar en la raíz
+            </span>
+          ) : isRunning ? (
             <>
               <button className="danger-outline" disabled={!!busy} onClick={onStop}>
                 <CircleStop size={16} /> Detener
               </button>
-              <button className="primary" disabled={!!busy} onClick={onRestart}>
-                <RotateCcw size={16} /> Reiniciar
-              </button>
+              {kind === 'service' && (
+                <button className="primary" disabled={!!busy} onClick={onRestart}>
+                  <RotateCcw size={16} /> Reiniciar
+                </button>
+              )}
             </>
           ) : (
             <button
               className="primary"
-              disabled={!!busy || !scan.devCommand || isMissingDeps}
-              onClick={() => void onRun('dev')}
+              disabled={!!busy || !primaryAction || isMissingDeps}
+              onClick={() => primaryAction && void onRun(primaryAction.action, primaryAction.script)}
               title={
                 isMissingDeps
                   ? 'Primero instala las dependencias para desbloquear este botón'
-                  : !scan.devCommand
-                  ? 'No hay comando de desarrollo detectado'
-                  : 'Run'
+                  : !primaryAction
+                  ? 'No se detectó ningún comando ejecutable'
+                  : primaryAction.title
               }
               style={{
                 opacity: isMissingDeps ? 0.45 : 1,
                 cursor: isMissingDeps ? 'not-allowed' : 'pointer',
               }}
             >
-              {busy === 'run:dev' ? (
+              {busy?.startsWith('run:') ? (
                 <LoaderCircle size={16} className="spin" />
               ) : (
                 <Play size={16} fill="currentColor" />
               )}
-              Run
+              {primaryAction?.label ?? fallbackActionLabel}
             </button>
           )}
         </div>
@@ -1358,7 +1467,7 @@ function ProjectWorkspace({
             </span>
           </>
         )}
-        {project.port && (
+        {project.port && servesOverHttp && (
           <>
             <span className="divider" />
             <span>
@@ -1463,7 +1572,14 @@ function ProjectWorkspace({
         <DiskTab disk={disk} onLoad={onDisk} onPreviewCleanup={onPreviewCleanup} busy={busy} />
       )}
       {tab === 'scripts' && <ScriptsTab scripts={scan.scripts} onRun={onRun} busy={busy} />}
-      {tab === 'configuration' && <ConfigurationTab project={project} scan={scan} onNotify={onNotify} />}
+      {tab === 'configuration' && (
+        <ConfigurationTab
+          project={project}
+          scan={scan}
+          onNotify={onNotify}
+          onKindChange={kind => onKindChange(project, kind)}
+        />
+      )}
     </>
   )
 }
@@ -1667,7 +1783,7 @@ function Dashboard({
                       >
                         <CircleStop size={13} />
                       </button>
-                    ) : project.devCommand ? (
+                    ) : project.devCommand && projectKind(project) === 'service' ? (
                       <button
                         className="secondary"
                         style={{ height: 26, padding: '0 8px', fontSize: 11, borderRadius: 4 }}
@@ -1784,21 +1900,39 @@ function SummaryTab({
   process: ProjectDetail['process']
   recentCommands: ProjectDetail['recentCommands']
   onRun: (
-    action: 'dev' | 'build' | 'test' | 'lint' | 'format' | 'typecheck' | 'install' | 'script',
+    action: 'dev' | 'build' | 'test' | 'lint' | 'format' | 'typecheck' | 'install' | 'script' | 'notebook',
     script?: string
   ) => Promise<void> | undefined
   onNotify: (text: string, kind: 'success' | 'error' | 'info') => void
 }) {
-  const activeCmd = process?.command || project.devCommand || 'No se detectó un comando de desarrollo'
+  const kind = projectKind(project)
+  const activeCmd = process?.command || project.devCommand || 'No se detectó un comando ejecutable'
+  const cardTitle =
+    project.status === 'running'
+      ? 'Proceso Activo'
+      : kind === 'script'
+      ? 'Tarea principal'
+      : kind === 'notebook'
+      ? 'Cuadernos'
+      : kind === 'inert'
+      ? 'Sin comando de arranque'
+      : 'Comando de Inicio'
+  // Un script no está «detenido»: terminó, y con un código. Ese dato ya vivía en
+  // el historial y no se mostraba en ninguna parte.
+  const lastRun = kind === 'script' ? recentCommands.find(command => command.status !== 'running') : undefined
   return (
     <div className="detail-grid">
       <section className="card overview-card">
         <div className="card-heading">
           <div>
-            <p className="eyebrow">COMANDO PRINCIPAL</p>
-            <h2>{project.status === 'running' ? 'Proceso Activo' : 'Comando de Inicio'}</h2>
+            <p className="eyebrow">{kind === 'service' ? 'COMANDO PRINCIPAL' : kindMeta[kind].label.toUpperCase()}</p>
+            <h2>{cardTitle}</h2>
           </div>
-          <StatusPill status={project.status} />
+          {kind === 'script' && project.status !== 'running' ? (
+            <LastRunPill record={lastRun} />
+          ) : (
+            <StatusPill status={project.status} />
+          )}
         </div>
 
         <div className="command-display">
@@ -1868,7 +2002,7 @@ function SummaryTab({
                   }
                 />
                 <code>{command.command}</code>
-                <span className="mono">{command.status}</span>
+                <span className="mono">{describeCommandOutcome(command)}</span>
                 <time>{formatDate(command.startedAt)}</time>
               </div>
             ))}
@@ -2371,13 +2505,51 @@ function ConfigurationTab({
   project,
   scan,
   onNotify,
+  onKindChange,
 }: {
   project: Project
   scan: ProjectDetail['scan']
   onNotify: (text: string, kind: 'success' | 'error' | 'info') => void
+  onKindChange: (kind: ProjectKind | null) => Promise<void> | void
 }) {
+  const detected = project.kind ?? scan.kind ?? 'service'
+  const selected: ProjectKind | 'auto' = project.kindOverride ?? 'auto'
   return (
     <div className="detail-grid">
+      <section className="card span-two">
+        <div className="card-heading">
+          <div>
+            <p className="eyebrow">NATURALEZA DEL PROYECTO</p>
+            <h2>Cómo se trata este proyecto</h2>
+            <p>
+              Decide qué acciones ofrece el panel. Se deduce del contenido de la carpeta, pero ningún
+              detector acierta siempre —hay scripts que arrancan un servidor—, así que puedes fijarla.
+            </p>
+          </div>
+        </div>
+        <div className="kind-picker">
+          {(['auto', 'service', 'script', 'notebook', 'inert'] as const).map(option => {
+            const isAuto = option === 'auto'
+            const meta = isAuto ? null : kindMeta[option]
+            const OptionIcon = meta?.icon ?? RefreshCw
+            return (
+              <button
+                key={option}
+                type="button"
+                className={`kind-option ${selected === option ? 'selected' : ''}`}
+                onClick={() => void onKindChange(isAuto ? null : option)}
+              >
+                <span className="kind-option-head">
+                  <OptionIcon size={14} />
+                  <strong>{isAuto ? `Automática (${kindMeta[detected].label})` : meta!.label}</strong>
+                  {selected === option && <Check size={13} color="var(--accent-primary)" />}
+                </span>
+                <small>{isAuto ? 'Se recalcula en cada escaneo del proyecto.' : meta!.hint}</small>
+              </button>
+            )
+          })}
+        </div>
+      </section>
       <section className="card span-two">
         <div className="card-heading">
           <div>
@@ -3467,6 +3639,52 @@ function Modal({
         {children}
       </section>
     </div>
+  )
+}
+
+/** Resultado de una ejecución en una línea: el código de salida y la duración ya
+ *  se guardaban en el historial y no se mostraban en ninguna pantalla. */
+function describeCommandOutcome(command: ProjectDetail['recentCommands'][number]): string {
+  const duration = commandDuration(command)
+  if (command.status === 'running') return duration ? `ejecutando · ${duration}` : 'ejecutando'
+  const outcome =
+    command.exitCode === 0
+      ? 'terminó (0)'
+      : command.exitCode === null
+      ? command.status === 'stopped'
+        ? 'detenido a mano'
+        : command.status
+      : `falló (${command.exitCode})`
+  return duration ? `${outcome} · ${duration}` : outcome
+}
+
+function commandDuration(command: ProjectDetail['recentCommands'][number]): string | null {
+  const started = Date.parse(command.startedAt)
+  const ended = command.endedAt ? Date.parse(command.endedAt) : Date.now()
+  if (Number.isNaN(started) || Number.isNaN(ended) || ended < started) return null
+  const seconds = Math.round((ended - started) / 1000)
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  return minutes < 60 ? `${minutes}m ${seconds % 60}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`
+}
+
+/** Para un script, «detenido» no dice nada: lo que importa es cómo terminó la
+ *  última vez. */
+function LastRunPill({ record }: { record?: ProjectDetail['recentCommands'][number] }) {
+  if (!record) {
+    return (
+      <span className="status-pill stopped">
+        <StatusDot status="stopped" />
+        Sin ejecutar
+      </span>
+    )
+  }
+  const failed = record.exitCode !== null && record.exitCode !== 0
+  return (
+    <span className={`status-pill ${failed ? 'error' : 'stopped'}`} title={record.command}>
+      <StatusDot status={failed ? 'error' : 'stopped'} />
+      {describeCommandOutcome(record)}
+    </span>
   )
 }
 

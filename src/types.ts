@@ -1,5 +1,12 @@
 export type ProjectStatus = 'stopped' | 'starting' | 'running' | 'error'
 
+/**
+ * Cómo debe tratarse un proyecto. El panel asumía que todo era un servidor de
+ * desarrollo: un script que corre y termina no tiene puerto, y su estado «en
+ * ejecución» —que se deduce de quién escucha el puerto— era una ficción.
+ */
+export type ProjectKind = 'service' | 'script' | 'notebook' | 'inert'
+
 export interface Project {
   id: string
   name: string
@@ -21,6 +28,10 @@ export interface Project {
   lastError: string | null
   isPinned?: boolean
   isArchived?: boolean
+  /** Naturaleza deducida por el detector en el último escaneo. */
+  kind?: ProjectKind
+  /** Naturaleza forzada por el usuario; manda sobre la deducida. */
+  kindOverride?: ProjectKind | null
 }
 
 export interface DetectedScript {
@@ -38,6 +49,7 @@ export interface DeclaredDependency {
 
 export interface ProjectScan {
   projectType: string
+  kind?: ProjectKind
   frameworks: string[]
   packageManager: string | null
   manifests: string[]
@@ -126,7 +138,7 @@ export interface PortInfo {
 
 export interface RunProjectRequest {
   projectId: string
-  action: 'dev' | 'build' | 'test' | 'lint' | 'format' | 'typecheck' | 'install' | 'script'
+  action: 'dev' | 'build' | 'test' | 'lint' | 'format' | 'typecheck' | 'install' | 'script' | 'notebook'
   script?: string
 }
 

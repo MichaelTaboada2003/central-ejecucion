@@ -25,6 +25,59 @@ pub struct Project {
     pub is_pinned: bool,
     #[serde(default)]
     pub is_archived: bool,
+    /// Naturaleza deducida por el detector en el último escaneo.
+    #[serde(default)]
+    pub kind: ProjectKind,
+    /// Naturaleza forzada por el usuario. Ningún clasificador automático acierta
+    /// siempre —hay scripts que arrancan un servidor— así que la deducción es un
+    /// valor por omisión, no una jaula.
+    #[serde(default)]
+    pub kind_override: Option<ProjectKind>,
+}
+
+impl Project {
+    /// Naturaleza que manda de verdad: la elegida por el usuario si la hay.
+    pub fn effective_kind(&self) -> ProjectKind {
+        self.kind_override.unwrap_or(self.kind)
+    }
+}
+
+/// Cómo debe tratarse un proyecto. El panel asumía que todo era un servidor de
+/// desarrollo: un script de Python que corre y termina no tiene puerto, y su
+/// estado «en ejecución» —que se deduce de quién escucha el puerto— era una
+/// ficción.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectKind {
+    /// Servidor de larga duración: tiene puerto, URL y arrancar/detener.
+    #[default]
+    Service,
+    /// Tarea de una pasada: importa el código de salida y la duración, no el puerto.
+    Script,
+    /// Cuadernos Jupyter: la acción útil es abrir Jupyter Lab.
+    Notebook,
+    /// Nada ejecutable en la raíz (repos de documentación, monorepos sin scripts).
+    Inert,
+}
+
+impl ProjectKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Service => "service",
+            Self::Script => "script",
+            Self::Notebook => "notebook",
+            Self::Inert => "inert",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Self {
+        match value {
+            "script" => Self::Script,
+            "notebook" => Self::Notebook,
+            "inert" => Self::Inert,
+            _ => Self::Service,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -77,6 +130,8 @@ pub struct DeclaredDependency {
 #[serde(rename_all = "camelCase")]
 pub struct ProjectScan {
     pub project_type: String,
+    #[serde(default)]
+    pub kind: ProjectKind,
     pub frameworks: Vec<String>,
     pub package_manager: Option<String>,
     pub manifests: Vec<String>,
