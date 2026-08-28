@@ -1,0 +1,7 @@
+# Compilación incremental desactivada a propósito.
+#
+# El directorio target/debug/incremental llegaba a 6+ GB de un target/ de ~20 GB,
+# y su caché corrupta provocó fallos de enlazado con símbolos `_anon.*.llvm.*`
+# indefinidos al compilar en paralelo con `cargo test`.
+[build]
+incremental = false

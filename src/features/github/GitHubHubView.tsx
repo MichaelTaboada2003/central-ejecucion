@@ -1,0 +1,442 @@
+import { ArrowUpRight, Check, Cloud, CloudOff, DownloadCloud, FolderOpen, GitFork, Globe, LayoutGrid, List, LoaderCircle, Lock, RefreshCw, Search, Settings2, Star } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { api } from '../../api'
+import { getStackClass } from '../../lib/format'
+import type { GitHubAccountStatus, GitHubRepo } from '../../types'
+import { GitHubLogo } from '../../components/GitHubLogo'
+import { StatCard } from '../../components/Primitives'
+
+export function GitHubHubView({
+  status,
+  repos,
+  loading,
+  onRefresh,
+  onClone,
+  onOpenLocal,
+  onSafeOffload,
+  onOpenSettings,
+  busy,
+}: {
+  status: GitHubAccountStatus | null
+  repos: GitHubRepo[]
+  loading: boolean
+  onRefresh: () => void
+  onClone: (repo: GitHubRepo) => void
+  onOpenLocal: (repo: GitHubRepo) => void
+  onSafeOffload: (repo: GitHubRepo) => void
+  onOpenSettings: () => void
+  busy: string | null
+}) {
+  const [filter, setFilter] = useState<'all' | 'owner' | 'cloud' | 'local' | 'public' | 'private'>('all')
+  const [query, setQuery] = useState('')
+  const [layoutMode, setLayoutMode] = useState<'table' | 'grid'>('table')
+
+  const ownerPrefix = status?.username ? `${status.username.toLowerCase()}/` : ''
+
+  const stats = useMemo(() => {
+    const total = repos.length
+    const owned = ownerPrefix ? repos.filter(r => r.fullName.toLowerCase().startsWith(ownerPrefix)).length : total
+    const cloned = repos.filter(r => r.isCloned).length
+    const cloudOnly = total - cloned
+    const totalStars = repos.reduce((sum, r) => sum + r.stars, 0)
+    return { total, owned, cloned, cloudOnly, totalStars }
+  }, [repos, ownerPrefix])
+
+  const filteredRepos = useMemo(() => {
+    return repos.filter(r => {
+      const matchQuery = `${r.name} ${r.fullName} ${r.language || ''} ${r.description || ''}`
+        .toLowerCase()
+        .includes(query.toLowerCase())
+      if (!matchQuery) return false
+
+      if (filter === 'owner') return ownerPrefix ? r.fullName.toLowerCase().startsWith(ownerPrefix) : true
+      if (filter === 'cloud') return !r.isCloned
+      if (filter === 'local') return r.isCloned
+      if (filter === 'public') return !r.isPrivate
+      if (filter === 'private') return r.isPrivate
+      return true
+    })
+  }, [repos, filter, query, ownerPrefix])
+
+  return (
+    <div className="github-hub-layout">
+      <div className="dashboard-title">
+        <div>
+          <p className="eyebrow">WORKSPACE EN LA NUBE</p>
+          <h1>GitHub</h1>
+          <p>
+            Explora tus repositorios remotos, clónalos bajo demanda con un clic y libéralos de tu disco de forma segura cuando termines de trabajar.
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="secondary" onClick={onRefresh} disabled={loading || !!busy}>
+            <RefreshCw size={15} className={loading ? 'spin' : ''} /> {loading ? 'Sincronizando…' : 'Actualizar Repos'}
+          </button>
+          <button className="primary" onClick={onOpenSettings}>
+            <Settings2 size={16} /> {status?.authenticated ? 'Ajustes' : 'Conectar GitHub'}
+          </button>
+        </div>
+      </div>
+
+      <section className="stat-grid">
+        <StatCard
+          label="Total en GitHub"
+          value={stats.total || (status?.totalRepos ?? 0)}
+          status="neutral"
+          icon={<GitHubLogo size={18} color="var(--accent-cyan)" />}
+        />
+        <StatCard
+          label="Solo en Nube (0 MB)"
+          value={stats.cloudOnly}
+          status="stopped"
+          icon={<DownloadCloud size={18} />}
+        />
+        <StatCard
+          label="Clonados en tu Mac"
+          value={stats.cloned}
+          status="running"
+          icon={<FolderOpen size={18} />}
+        />
+        <StatCard
+          label="Estrellas Totales"
+          value={stats.totalStars}
+          status="neutral"
+          icon={<Star size={18} />}
+        />
+      </section>
+
+      <section className="dashboard-section">
+        <div className="section-title">
+          <div>
+            <h2>Repositorios en la Nube</h2>
+            <p>
+              {filteredRepos.length
+                ? `${filteredRepos.length} repositorio(s) disponibles ${status?.username ? `en tu cuenta @${status.username}` : 'en GitHub'}`
+                : 'No se encontraron repositorios con ese criterio'}
+            </p>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <div className="search" style={{ maxWidth: 280, width: '100%' }}>
+              <Search size={15} />
+              <input
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder="Buscar repositorios…"
+                aria-label="Buscar repositorios"
+              />
+            </div>
+            <div className="filter-group">
+              {(['all', 'owner', 'cloud', 'local', 'public', 'private'] as const).map(f => {
+                const label =
+                  f === 'all'
+                    ? `Todos (${stats.total})`
+                    : f === 'owner'
+                    ? `Propios (${stats.owned})`
+                    : f === 'cloud'
+                    ? `Solo Nube (${stats.cloudOnly})`
+                    : f === 'local'
+                    ? `Clonados (${stats.cloned})`
+                    : f === 'public'
+                    ? 'Públicos'
+                    : 'Privados'
+                return (
+                  <button
+                    key={f}
+                    className={filter === f ? 'active' : ''}
+                    onClick={() => setFilter(f)}
+                  >
+                    {label}
+                  </button>
+                )
+              })}
+            </div>
+            <div className="view-mode-toggles">
+              <button
+                className={`view-toggle-btn ${layoutMode === 'table' ? 'active' : ''}`}
+                onClick={() => setLayoutMode('table')}
+                title="Vista en tabla (Igual al Panel Local)"
+              >
+                <List size={15} />
+              </button>
+              <button
+                className={`view-toggle-btn ${layoutMode === 'grid' ? 'active' : ''}`}
+                onClick={() => setLayoutMode('grid')}
+                title="Vista en tarjetas"
+              >
+                <LayoutGrid size={15} />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {loading && !repos.length ? (
+          <div className="empty-card" style={{ padding: '40px 20px', textAlign: 'center' }}>
+            <LoaderCircle size={28} className="spin" style={{ margin: '0 auto 12px', display: 'block' }} />
+            <h3>Sincronizando repositorios con GitHub…</h3>
+            <p>Consultando el catálogo de @{status?.username || 'tu cuenta'}…</p>
+          </div>
+        ) : filteredRepos.length ? (
+          layoutMode === 'table' ? (
+            <div className="github-table" role="table">
+              <div className="github-table-head" role="row">
+                <span>Repositorio</span>
+                <span>Lenguaje / Visibilidad</span>
+                <span>Estado</span>
+                <span>Métricas</span>
+                <span>Actualización</span>
+                <span style={{ textAlign: 'right' }}>Acciones</span>
+              </div>
+              {filteredRepos.map(repo => {
+                const isCloning = busy === `clone:${repo.name}`
+                return (
+                  <div
+                    className={`github-table-row ${repo.isCloned ? 'is-cloned' : ''}`}
+                    key={repo.id}
+                    style={{ cursor: 'pointer' }}
+                    title={`Abrir «${repo.fullName}» en GitHub`}
+                    onClick={() => void api.openExternalUrl(repo.htmlUrl)}
+                  >
+                    <span className="project-cell">
+                      <span className="mini-icon">
+                        <GitHubLogo size={18} color={repo.isCloned ? 'var(--accent-primary)' : 'var(--accent-cyan)'} />
+                      </span>
+                      <span className="project-info">
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span
+                            className="github-title-link"
+                            title={`Abrir ${repo.fullName} en GitHub`}
+                          >
+                            <strong>{repo.name}</strong>
+                            <ArrowUpRight size={13} style={{ opacity: 0.6 }} />
+                          </span>
+                        </span>
+                        <small title={repo.description || repo.fullName}>
+                          {repo.fullName} {repo.description ? `· ${repo.description}` : ''}
+                        </small>
+                      </span>
+                    </span>
+
+                    <span className="stack-list" style={{ alignItems: 'center' }}>
+                      {repo.language ? (
+                        <em className={`stack-badge ${getStackClass(repo.language)}`}>
+                          {repo.language}
+                        </em>
+                      ) : (
+                        <em className="stack-badge">Repo</em>
+                      )}
+                      {repo.isPrivate ? (
+                        <span className="vis-badge private" title="Repositorio privado">
+                          <Lock size={10} /> Privado
+                        </span>
+                      ) : (
+                        <span className="vis-badge public" title="Repositorio público">
+                          <Globe size={10} /> Público
+                        </span>
+                      )}
+                    </span>
+
+                    <span>
+                      {repo.isCloned ? (
+                        <span className="status-pill status-running">
+                          <Check size={11} /> En tu Mac
+                        </span>
+                      ) : (
+                        <span className="status-pill status-stopped">
+                          <Cloud size={11} /> Solo Nube
+                        </span>
+                      )}
+                    </span>
+
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: 'var(--text-secondary)' }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <Star size={12} color="var(--accent-amber)" /> {repo.stars}
+                      </span>
+                      {repo.forks > 0 && (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          <GitFork size={12} /> {repo.forks}
+                        </span>
+                      )}
+                    </span>
+
+                    <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
+                      {new Date(repo.updatedAt).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' })}
+                    </span>
+
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end' }}>
+                      {repo.isCloned ? (
+                        <>
+                          <button
+                            className="table-action-icon-btn open"
+                            onClick={e => {
+                              e.stopPropagation()
+                              onOpenLocal(repo)
+                            }}
+                            title={repo.localProjectId ? 'Abrir en Panel Local' : 'Está en tu disco pero no registrado en el panel'}
+                          >
+                            <FolderOpen size={15} />
+                          </button>
+                          <button
+                            className="table-action-icon-btn offload"
+                            onClick={e => {
+                              e.stopPropagation()
+                              onSafeOffload(repo)
+                            }}
+                            title="Archivar en GitHub y liberar espacio de disco (elimina copia local de forma segura)"
+                          >
+                            <CloudOff size={15} />
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          className="primary"
+                          onClick={e => {
+                            e.stopPropagation()
+                            onClone(repo)
+                          }}
+                          disabled={isCloning || !!busy}
+                          style={{ height: 28, fontSize: 11, padding: '0 12px', borderRadius: 4 }}
+                        >
+                          {isCloning ? (
+                            <>
+                              <LoaderCircle size={12} className="spin" /> Clonando…
+                            </>
+                          ) : (
+                            <>
+                              <DownloadCloud size={12} /> Clonar
+                            </>
+                          )}
+                        </button>
+                      )}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="github-grid">
+              {filteredRepos.map(repo => {
+                const isCloning = busy === `clone:${repo.name}`
+                return (
+                  <div
+                    className={`github-card ${repo.isCloned ? 'is-cloned' : ''}`}
+                    key={repo.id}
+                    style={{ cursor: 'pointer' }}
+                    title={`Abrir «${repo.fullName}» en GitHub`}
+                    onClick={() => void api.openExternalUrl(repo.htmlUrl)}
+                  >
+                    <div className="github-card-header">
+                      <div className="github-repo-name">
+                        <span
+                          className="github-title-link"
+                          title="Ver en GitHub"
+                        >
+                          <strong>{repo.name}</strong>
+                          <ArrowUpRight size={14} />
+                        </span>
+                        <span className="github-full-name">{repo.fullName}</span>
+                      </div>
+                      <div className="github-badges">
+                        {repo.isPrivate ? (
+                          <span className="vis-badge private" title="Repositorio privado">
+                            <Lock size={11} /> Privado
+                          </span>
+                        ) : (
+                          <span className="vis-badge public" title="Repositorio público">
+                            <Globe size={11} /> Público
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <p className="github-desc">{repo.description || 'Sin descripción en GitHub.'}</p>
+
+                    <div className="github-meta-row">
+                      {repo.language && (
+                        <span className="github-lang">
+                          <span className="lang-dot" />
+                          {repo.language}
+                        </span>
+                      )}
+                      {repo.stars > 0 && (
+                        <span className="github-stat">
+                          <Star size={12} /> {repo.stars}
+                        </span>
+                      )}
+                      {repo.forks > 0 && (
+                        <span className="github-stat">
+                          <GitFork size={12} /> {repo.forks}
+                        </span>
+                      )}
+                      <span className="github-updated">
+                        Actualizado: {new Date(repo.updatedAt).toLocaleDateString()}
+                      </span>
+                    </div>
+
+                    <div className="github-card-actions">
+                      {repo.isCloned ? (
+                        <>
+                          <div className="cloned-badge">
+                            <Check size={13} color="var(--accent-primary)" />
+                            <span>En tu Mac (Listo)</span>
+                          </div>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <button
+                              className="table-action-icon-btn open"
+                              onClick={e => {
+                                e.stopPropagation()
+                                onOpenLocal(repo)
+                              }}
+                              title={repo.localProjectId ? 'Abrir en Panel Local' : 'Está en tu disco pero no registrado en el panel'}
+                            >
+                              <FolderOpen size={15} />
+                            </button>
+                            <button
+                              className="table-action-icon-btn offload"
+                              onClick={e => {
+                                e.stopPropagation()
+                                onSafeOffload(repo)
+                              }}
+                              title="Archivar en GitHub y liberar espacio de disco"
+                            >
+                              <CloudOff size={15} />
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <button
+                          className="primary"
+                          onClick={e => {
+                            e.stopPropagation()
+                            onClone(repo)
+                          }}
+                          disabled={isCloning || !!busy}
+                          style={{ width: '100%', height: 32, fontSize: 12 }}
+                        >
+                          {isCloning ? (
+                            <>
+                              <LoaderCircle size={13} className="spin" /> Clonando repositorio…
+                            </>
+                          ) : (
+                            <>
+                              <DownloadCloud size={13} /> Clonar
+                            </>
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )
+        ) : (
+          <div className="empty-card" style={{ padding: '36px 20px', textAlign: 'center' }}>
+            <Cloud size={32} style={{ margin: '0 auto 12px', display: 'block', opacity: 0.5 }} />
+            <h3>No se encontraron repositorios con los filtros seleccionados</h3>
+            <p>Prueba buscando con otro término o cambiando los filtros superiores.</p>
+          </div>
+        )}
+      </section>
+    </div>
+  )
+}

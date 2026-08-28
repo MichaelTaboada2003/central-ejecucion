@@ -36,14 +36,50 @@ const PROBE_TTL: Duration = Duration::from_millis(2_500);
 
 type PortMap = HashMap<u16, Vec<(u32, String)>>;
 
+/// Clave del token de GitHub en la tabla `settings`. Una sola constante: cuando
+/// estas lineas estaban copiadas en cinco comandos, uno leia `github_pat` —una
+/// clave que nadie escribe nunca— y por eso «Publicar en GitHub» pedia un token
+/// que ya estaba configurado.
+const GITHUB_TOKEN_KEY: &str = "github_token";
+/// Carpeta por omision donde se clonan los repositorios.
+const DEFAULT_CLONE_DIR_KEY: &str = "default_clone_dir";
+
 pub struct AppState {
     storage: Arc<Mutex<Storage>>,
     processes: ProcessManager,
 }
 
+impl AppState {
+    /// Ejecuta una operacion con el almacenamiento tomado y lo libera al salir.
+    ///
+    /// Estas tres lineas estaban repetidas 44 veces en este fichero. Ademas de
+    /// ruido, cada copia era una oportunidad de equivocarse: el cerrojo se debe
+    /// mantener el menor tiempo posible y NUNCA durante E/S de disco o de red.
+    fn with_storage<T>(&self, operation: impl FnOnce(&Storage) -> Result<T, String>) -> Result<T, String> {
+        let storage = self
+            .storage
+            .lock()
+            .map_err(|_| "El almacenamiento local está ocupado.".to_string())?;
+        operation(&storage)
+    }
+
+    /// Token de GitHub efectivo: el que se pase, el guardado, o el del entorno.
+    /// Que un almacenamiento ocupado no de token es aceptable —git y la API
+    /// fallaran con su propio mensaje— y evita propagar el error a comandos que
+    /// funcionan igual sin credenciales.
+    fn github_token(&self, custom_token: Option<&str>) -> Option<String> {
+        let stored = self
+            .storage
+            .lock()
+            .ok()
+            .and_then(|storage| storage.get_setting(GITHUB_TOKEN_KEY).ok().flatten());
+        github::GitHubService::resolve_token(custom_token, stored)
+    }
+}
+
 #[tauri::command(async)]
 fn list_projects(state: tauri::State<'_, AppState>) -> Result<Vec<Project>, String> {
-    let mut projects = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.list_projects()?;
+    let mut projects = state.with_storage(|db| db.list_projects())?;
     // El mutex ya está liberado: comprobar en disco si cada carpeta sigue
     // montada puede tardar segundos en un volumen dormido y no debe bloquear
     // los demás comandos.
@@ -73,13 +109,13 @@ fn register_project(request: RegisterProjectRequest, state: tauri::State<'_, App
     if is_project_running(&project).is_some() {
         project.status = ProjectStatus::Running;
     }
-    state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.insert_project(&project)?;
+    state.with_storage(|db| db.insert_project(&project))?;
     Ok(project)
 }
 
 #[tauri::command(async)]
 fn get_project_detail(project_id: String, state: tauri::State<'_, AppState>) -> Result<ProjectDetail, String> {
-    let mut project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&project_id)?;
+    let mut project = state.with_storage(|db| db.get_project(&project_id))?;
     let mut process_info = state.processes.get(&project_id);
     if process_info.is_none() {
         if let Some(pid) = is_project_running(&project) {
@@ -108,13 +144,13 @@ fn get_project_detail(project_id: String, state: tauri::State<'_, AppState>) -> 
         }
     };
     let scan = scan_project(&root)?;
-    let recent_commands = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.recent_commands(&project_id)?;
+    let recent_commands = state.with_storage(|db| db.recent_commands(&project_id))?;
     Ok(ProjectDetail { process: process_info, project, scan, recent_commands })
 }
 
 #[tauri::command(async)]
 fn refresh_project(project_id: String, state: tauri::State<'_, AppState>) -> Result<Project, String> {
-    let mut project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&project_id)?;
+    let mut project = state.with_storage(|db| db.get_project(&project_id))?;
     // Un volumen externo desmontado o un `canonicalize` que cambia de destino no
     // pueden costar el registro del proyecto: antes se borraba la fila y con ella
     // sus etiquetas, su historial y su estado de fijado. Se marca el fallo y el
@@ -138,7 +174,7 @@ fn refresh_project(project_id: String, state: tauri::State<'_, AppState>) -> Res
     project.local_url = scan.local_url;
     project.port = scan.port;
     project.disk_size_bytes = report.total_bytes;
-    state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.refresh_project_metadata(&project)?;
+    state.with_storage(|db| db.refresh_project_metadata(&project))?;
     Ok(project)
 }
 
@@ -151,7 +187,7 @@ fn refresh_project(project_id: String, state: tauri::State<'_, AppState>) -> Res
 /// `node_modules` y `target` tarda minutos, y aquí sólo interesa la detección.
 #[tauri::command(async)]
 fn refresh_all_projects(state: tauri::State<'_, AppState>) -> Result<Vec<Project>, String> {
-    let projects = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.list_projects()?;
+    let projects = state.with_storage(|db| db.list_projects())?;
     for mut project in projects {
         let Ok(root) = trusted_project_root(&project) else { continue };
         let Ok(scan) = scan_project(&root) else { continue };
@@ -166,9 +202,9 @@ fn refresh_all_projects(state: tauri::State<'_, AppState>) -> Result<Vec<Project
         project.port = scan.port;
         // `project.disk_size_bytes` viaja sin tocar, así que se reescribe con el
         // valor que ya tenía en la base.
-        let _ = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.refresh_project_metadata(&project);
+        let _ = state.with_storage(|db| db.refresh_project_metadata(&project));
     }
-    let mut refreshed = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.list_projects()?;
+    let mut refreshed = state.with_storage(|db| db.list_projects())?;
     storage::mark_unavailable_projects(&mut refreshed);
     update_projects_status_batch(&mut refreshed, &state.processes);
     Ok(refreshed)
@@ -183,7 +219,7 @@ pub struct DeleteProjectRequest {
 
 #[tauri::command(async)]
 fn delete_project(request: DeleteProjectRequest, app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&request.project_id)?;
+    let project = state.with_storage(|db| db.get_project(&request.project_id))?;
     let _ = state.processes.stop(&app, &state.storage, &request.project_id);
     if request.delete_files {
         let path = Path::new(&project.canonical_path);
@@ -191,19 +227,19 @@ fn delete_project(request: DeleteProjectRequest, app: tauri::AppHandle, state: t
             std::fs::remove_dir_all(path).map_err(|e| format!("No se pudo borrar la carpeta del disco: {e}"))?;
         }
     }
-    state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.delete_project(&request.project_id)?;
+    state.with_storage(|db| db.delete_project(&request.project_id))?;
     Ok(())
 }
 
 #[tauri::command(async)]
 fn unregister_project(project_id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
-    state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.delete_project(&project_id)?;
+    state.with_storage(|db| db.delete_project(&project_id))?;
     Ok(())
 }
 
 #[tauri::command(async)]
 fn toggle_pin_project(project_id: String, is_pinned: bool, state: tauri::State<'_, AppState>) -> Result<bool, String> {
-    state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.toggle_project_pin(&project_id, is_pinned)
+    state.with_storage(|db| db.toggle_project_pin(&project_id, is_pinned))
 }
 
 /// Fija la naturaleza del proyecto a mano, o vuelve a la deducida con `None`.
@@ -221,19 +257,20 @@ fn set_project_kind(project_id: String, kind: Option<String>, state: tauri::Stat
             Some(parsed)
         }
     };
-    let storage = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?;
-    storage.set_project_kind_override(&project_id, parsed)?;
-    storage.get_project(&project_id)
+        state.with_storage(|db| {
+        db.set_project_kind_override(&project_id, parsed)?;
+        db.get_project(&project_id)
+    })
 }
 
 #[tauri::command(async)]
 fn toggle_archive_project(project_id: String, is_archived: bool, state: tauri::State<'_, AppState>) -> Result<bool, String> {
-    state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.toggle_project_archive(&project_id, is_archived)
+    state.with_storage(|db| db.toggle_project_archive(&project_id, is_archived))
 }
 
 #[tauri::command(async)]
 fn run_project(request: RunProjectRequest, app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<ProcessInfo, String> {
-    let mut project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&request.project_id)?;
+    let mut project = state.with_storage(|db| db.get_project(&request.project_id))?;
     let root = trusted_project_root(&project)?;
     let scan = scan_project(&root)?;
 
@@ -253,7 +290,7 @@ fn run_project(request: RunProjectRequest, app: tauri::AppHandle, state: tauri::
                 desired_port = Some(resolved);
                 project.port = Some(resolved);
                 project.local_url = Some(format!("http://localhost:{resolved}"));
-                let _ = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.refresh_project_metadata(&project);
+                let _ = state.with_storage(|db| db.refresh_project_metadata(&project));
             }
         }
     }
@@ -265,7 +302,7 @@ fn run_project(request: RunProjectRequest, app: tauri::AppHandle, state: tauri::
             Ok(process)
         }
         Err(error) => {
-            let _ = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.update_status(&project.id, ProjectStatus::Error, Some(&error));
+            let _ = state.with_storage(|db| db.update_status(&project.id, ProjectStatus::Error, Some(&error)));
             Err(error)
         }
     }
@@ -286,20 +323,20 @@ fn restart_project(project_id: String, app: tauri::AppHandle, state: tauri::Stat
 
 #[tauri::command(async)]
 fn get_disk_report(project_id: String, state: tauri::State<'_, AppState>) -> Result<crate::domain::DiskReport, String> {
-    let project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&project_id)?;
+    let project = state.with_storage(|db| db.get_project(&project_id))?;
     disk::disk_report(&project_id, &trusted_project_root(&project)?)
 }
 
 #[tauri::command(async)]
 fn preview_cleanup(project_id: String, state: tauri::State<'_, AppState>) -> Result<CleanupPreview, String> {
-    let project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&project_id)?;
+    let project = state.with_storage(|db| db.get_project(&project_id))?;
     disk::cleanup_preview(&project_id, &trusted_project_root(&project)?)
 }
 
 #[tauri::command(async)]
 fn clean_project(request: CleanupRequest, state: tauri::State<'_, AppState>) -> Result<Vec<String>, String> {
     if !request.confirmed { return Err("Limpieza bloqueada: primero revisa el dry-run y confirma explícitamente la acción.".into()); }
-    let project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&request.project_id)?;
+    let project = state.with_storage(|db| db.get_project(&request.project_id))?;
     let root = trusted_project_root(&project)?;
     let (deleted, _) = disk::clean_targets(&root, &request.targets)?;
     let _ = refresh_project(request.project_id, state)?;
@@ -308,26 +345,26 @@ fn clean_project(request: CleanupRequest, state: tauri::State<'_, AppState>) -> 
 
 #[tauri::command(async)]
 fn get_ide_settings(state: tauri::State<'_, AppState>) -> Result<IdeSettings, String> {
-    state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.ide_settings()
+    state.with_storage(|db| db.ide_settings())
 }
 
 #[tauri::command(async)]
 fn save_ide_settings(settings: IdeSettings, state: tauri::State<'_, AppState>) -> Result<IdeSettings, String> {
-    state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.save_ide_settings(&settings)?;
-    state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.ide_settings()
+    state.with_storage(|db| db.save_ide_settings(&settings))?;
+    state.with_storage(|db| db.ide_settings())
 }
 
 #[tauri::command(async)]
 fn launch_project_tool(project_id: String, tool_id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&project_id)?;
+    let project = state.with_storage(|db| db.get_project(&project_id))?;
     let root = trusted_project_root(&project)?;
-    let settings = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.ide_settings()?;
+    let settings = state.with_storage(|db| db.ide_settings())?;
     ide::launch_tool(&settings, &tool_id, &root)
 }
 
 #[tauri::command(async)]
 fn open_project_url(project_id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&project_id)?;
+    let project = state.with_storage(|db| db.get_project(&project_id))?;
     if project.status != ProjectStatus::Running && is_project_running(&project).is_none() {
         return Err("El proyecto no está en ejecución. Inicia el proyecto antes de abrir su URL.".into());
     }
@@ -342,7 +379,7 @@ fn open_external_url(url: String) -> Result<(), String> {
 
 #[tauri::command(async)]
 fn inspect_project_port(project_id: String, state: tauri::State<'_, AppState>) -> Result<Option<PortInfo>, String> {
-    let project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&project_id)?;
+    let project = state.with_storage(|db| db.get_project(&project_id))?;
     let Some(port) = project.port else { return Ok(None); };
     let pid = is_project_running(&project);
     Ok(Some(PortInfo { port, pid, listening: pid.is_some() }))
@@ -562,22 +599,20 @@ fn trusted_project_root(project: &Project) -> Result<PathBuf, String> {
 
 #[tauri::command(async)]
 fn get_github_status(custom_token: Option<String>, state: tauri::State<'_, AppState>) -> Result<GitHubAccountStatus, String> {
-    let storage_token = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_setting("github_token")?;
-    let token = github::GitHubService::resolve_token(custom_token.as_deref(), storage_token);
+    let token = state.github_token(custom_token.as_deref());
     github::GitHubService::get_account_status(token.as_deref())
 }
 
 #[tauri::command(async)]
 fn save_github_token(token: String, state: tauri::State<'_, AppState>) -> Result<GitHubAccountStatus, String> {
-    state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.set_setting("github_token", &token)?;
+    state.with_storage(|db| db.set_setting(GITHUB_TOKEN_KEY, &token))?;
     github::GitHubService::get_account_status(Some(&token))
 }
 
 #[tauri::command(async)]
 fn list_github_repos(custom_token: Option<String>, state: tauri::State<'_, AppState>) -> Result<Vec<GitHubRepo>, String> {
-    let storage_token = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_setting("github_token")?;
-    let token = github::GitHubService::resolve_token(custom_token.as_deref(), storage_token);
-    let local_projects = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.list_projects()?;
+    let token = state.github_token(custom_token.as_deref());
+    let local_projects = state.with_storage(|db| db.list_projects())?;
     github::GitHubService::list_repos(token.as_deref(), &local_projects)
 }
 
@@ -585,11 +620,8 @@ fn list_github_repos(custom_token: Option<String>, state: tauri::State<'_, AppSt
 fn clone_github_repo(request: CloneRepoRequest, state: tauri::State<'_, AppState>) -> Result<Project, String> {
     // El bloqueo se libera antes de clonar: `git clone` puede tardar minutos y
     // mantener el mutex dejaba congelado todo el resto del panel mientras tanto.
-    let (storage_token, local_projects) = {
-        let storage = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?;
-        (storage.get_setting("github_token")?, storage.list_projects()?)
-    };
-    let token = github::GitHubService::resolve_token(None, storage_token);
+    let local_projects = state.with_storage(|db| db.list_projects())?;
+    let token = state.github_token(None);
     let project = github::GitHubService::clone_and_register(
         &request.repo_name,
         &request.clone_url,
@@ -598,19 +630,19 @@ fn clone_github_repo(request: CloneRepoRequest, state: tauri::State<'_, AppState
         request.target_path.as_deref(),
         &local_projects,
     )?;
-    state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.insert_project(&project)?;
+    state.with_storage(|db| db.insert_project(&project))?;
     Ok(project)
 }
 
 #[tauri::command(async)]
 fn safe_offload_project(project_id: String, force: bool, app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<SafeOffloadResult, String> {
-    let project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&project_id)?;
+    let project = state.with_storage(|db| db.get_project(&project_id))?;
     if state.processes.get(&project_id).is_some() {
         let _ = state.processes.stop(&app, &state.storage, &project_id);
     }
     let path = Path::new(&project.canonical_path);
     github::GitHubService::safe_offload_project(path, force)?;
-    state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.delete_project(&project_id)?;
+    state.with_storage(|db| db.delete_project(&project_id))?;
     Ok(SafeOffloadResult {
         success: true,
         project_id,
@@ -621,13 +653,14 @@ fn safe_offload_project(project_id: String, force: bool, app: tauri::AppHandle, 
 
 #[tauri::command(async)]
 fn get_default_clone_dir(state: tauri::State<'_, AppState>) -> Result<String, String> {
-    let storage = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?;
-    if let Ok(Some(saved)) = storage.get_setting("default_clone_dir") {
+        let (saved, local_projects) = state.with_storage(|db| {
+        Ok((db.get_setting(DEFAULT_CLONE_DIR_KEY).ok().flatten(), db.list_projects().unwrap_or_default()))
+    })?;
+    if let Some(saved) = saved {
         if !saved.trim().is_empty() {
             return Ok(saved);
         }
     }
-    let local_projects = storage.list_projects().unwrap_or_default();
     let default_dest = github::GitHubService::resolve_default_clone_destination("", &local_projects)?;
     Ok(default_dest.to_string_lossy().to_string())
 }
@@ -642,8 +675,7 @@ fn set_default_clone_dir(path: String, state: tauri::State<'_, AppState>) -> Res
     if !p.exists() {
         std::fs::create_dir_all(p).map_err(|e| format!("No se pudo crear la carpeta: {e}"))?;
     }
-    let storage = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?;
-    storage.set_setting("default_clone_dir", trimmed)?;
+        state.with_storage(|db| db.set_setting(DEFAULT_CLONE_DIR_KEY, trimmed))?;
     Ok(trimmed.to_string())
 }
 
@@ -668,27 +700,24 @@ async fn pick_folder(title: Option<String>, default_path: Option<String>) -> Res
 
 #[tauri::command(async)]
 fn get_project_git_status(project_id: String, state: tauri::State<'_, AppState>) -> Result<GitStatusInfo, String> {
-    let project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&project_id)?;
-    let storage_token = state.storage.lock().ok().and_then(|s| s.get_setting("github_token").ok().flatten());
-    let token = github::GitHubService::resolve_token(None, storage_token);
+    let project = state.with_storage(|db| db.get_project(&project_id))?;
+    let token = state.github_token(None);
     let root = trusted_project_root(&project)?;
     github::GitHubService::get_project_git_status(&root, token.as_deref())
 }
 
 #[tauri::command(async)]
 fn project_git_pull(project_id: String, state: tauri::State<'_, AppState>) -> Result<GitActionResult, String> {
-    let project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&project_id)?;
-    let storage_token = state.storage.lock().ok().and_then(|s| s.get_setting("github_token").ok().flatten());
-    let token = github::GitHubService::resolve_token(None, storage_token);
+    let project = state.with_storage(|db| db.get_project(&project_id))?;
+    let token = state.github_token(None);
     let root = trusted_project_root(&project)?;
     github::GitHubService::git_pull(&root, token.as_deref())
 }
 
 #[tauri::command(async)]
 fn project_git_push(project_id: String, state: tauri::State<'_, AppState>) -> Result<GitActionResult, String> {
-    let project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&project_id)?;
-    let storage_token = state.storage.lock().ok().and_then(|s| s.get_setting("github_token").ok().flatten());
-    let token = github::GitHubService::resolve_token(None, storage_token);
+    let project = state.with_storage(|db| db.get_project(&project_id))?;
+    let token = state.github_token(None);
     let root = trusted_project_root(&project)?;
     github::GitHubService::git_push(&root, token.as_deref())
 }
@@ -702,7 +731,7 @@ fn project_git_commit(
     files: Option<Vec<String>>,
     state: tauri::State<'_, AppState>,
 ) -> Result<GitActionResult, String> {
-    let project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&project_id)?;
+    let project = state.with_storage(|db| db.get_project(&project_id))?;
     let root = trusted_project_root(&project)?;
     let files = files.unwrap_or_default();
     github::GitHubService::git_commit(&root, &message, &files)
@@ -710,18 +739,16 @@ fn project_git_commit(
 
 #[tauri::command(async)]
 fn project_git_commit_and_push(project_id: String, message: String, state: tauri::State<'_, AppState>) -> Result<GitActionResult, String> {
-    let project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&project_id)?;
-    let storage_token = state.storage.lock().ok().and_then(|s| s.get_setting("github_token").ok().flatten());
-    let token = github::GitHubService::resolve_token(None, storage_token);
+    let project = state.with_storage(|db| db.get_project(&project_id))?;
+    let token = state.github_token(None);
     let root = trusted_project_root(&project)?;
     github::GitHubService::git_commit_and_push(&root, &message, token.as_deref())
 }
 
 #[tauri::command(async)]
 fn publish_project_to_github(request: PublishToGitHubRequest, state: tauri::State<'_, AppState>) -> Result<GitActionResult, String> {
-    let mut project = state.storage.lock().map_err(|_| "El almacenamiento local está ocupado.".to_string())?.get_project(&request.project_id)?;
-    let storage_token = state.storage.lock().ok().and_then(|s| s.get_setting("github_token").ok().flatten());
-    let token = github::GitHubService::resolve_token(None, storage_token)
+    let mut project = state.with_storage(|db| db.get_project(&request.project_id))?;
+    let token = state.github_token(None)
         .ok_or_else(|| "Debes configurar un GitHub Token (PAT) en los Ajustes para publicar proyectos en tu cuenta.".to_string())?;
     let root = trusted_project_root(&project)?;
     let result = github::GitHubService::publish_project_to_github(&root, &project.name, request, &token)?;

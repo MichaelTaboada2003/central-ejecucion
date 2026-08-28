@@ -1,0 +1,466 @@
+import { ArrowUpRight, Check, Cloud, DownloadCloud, GitFork, LoaderCircle, RefreshCw, UploadCloud } from 'lucide-react'
+import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
+import { api } from '../../../api'
+import { canCommit, commitCounterState, selectedPaths, toggleExcluded } from '../../../lib/commit'
+import type { GitHubRepo, GitStatusInfo, Project } from '../../../types'
+import { GitHubLogo } from '../../../components/GitHubLogo'
+
+export function GitTab({
+  project,
+  gitHubRepo,
+  onNotify,
+  onReloadProject,
+}: {
+  project: Project
+  gitHubRepo?: GitHubRepo
+  onNotify: (text: string, kind: 'success' | 'error' | 'info') => void
+  onReloadProject: () => void
+}) {
+  const [gitStatus, setGitStatus] = useState<GitStatusInfo | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [commitMessage, setCommitMessage] = useState('')
+  const [excluded, setExcluded] = useState<Set<string>>(new Set())
+  const [publishName, setPublishName] = useState(project.name)
+  const [publishDesc, setPublishDesc] = useState('')
+  const [publishPrivate, setPublishPrivate] = useState(false)
+
+  const changes = gitStatus?.uncommittedChanges ?? []
+  const changedPaths = useMemo(() => changes.map(file => file.path), [changes])
+  const selectedFiles = useMemo(() => selectedPaths(changes, excluded), [changes, excluded])
+  const allSelected = selectedFiles.length === changedPaths.length && changedPaths.length > 0
+
+  const toggleFile = (path: string) => setExcluded(prev => toggleExcluded(prev, path))
+
+  const loadGitStatus = useCallback(async () => {
+    try {
+      setLoading(true)
+      const res = await api.getProjectGitStatus(project.id)
+      setGitStatus(res)
+    } catch (err) {
+      console.warn('Error al cargar git status:', err)
+    } finally {
+      setLoading(false)
+    }
+  }, [project.id])
+
+  useEffect(() => {
+    void loadGitStatus()
+  }, [loadGitStatus])
+
+  const handlePull = async () => {
+    setBusy('pull')
+    try {
+      const res = await api.gitPull(project.id)
+      onNotify(res.message, 'success')
+      await loadGitStatus()
+    } catch (err: any) {
+      onNotify(err?.message || String(err), 'error')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const handlePush = async () => {
+    setBusy('push')
+    try {
+      const res = await api.gitPush(project.id)
+      onNotify(res.message, 'success')
+      await loadGitStatus()
+    } catch (err: any) {
+      onNotify(err?.message || String(err), 'error')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // Commit y push son dos acciones distintas: juntarlas hacía que un fallo de
+  // red diera por fracasado un commit que sí se había hecho.
+  const handleCommit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!canCommit(commitMessage, selectedFiles)) return
+    setBusy('commit')
+    try {
+      const res = await api.gitCommit(project.id, commitMessage.trim(), selectedFiles)
+      onNotify(res.message, 'success')
+      setCommitMessage('')
+      setExcluded(new Set())
+      await loadGitStatus()
+    } catch (err: any) {
+      onNotify(err?.message || String(err), 'error')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const handlePublish = async (e: FormEvent) => {
+    e.preventDefault()
+    setBusy('publish')
+    try {
+      const res = await api.publishToGitHub({
+        projectId: project.id,
+        repoName: publishName.trim() || project.name,
+        description: publishDesc.trim() || undefined,
+        isPrivate: publishPrivate,
+      })
+      onNotify(res.message, 'success')
+      await loadGitStatus()
+      onReloadProject()
+    } catch (err: any) {
+      onNotify(err?.message || String(err), 'error')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  if (loading && !gitStatus) {
+    return (
+      <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-tertiary)' }}>
+        <LoaderCircle size={24} className="spin" style={{ margin: '0 auto 10px' }} />
+        <p>Consultando estado de Git y GitHub…</p>
+      </div>
+    )
+  }
+
+  if (!gitStatus?.isRepo) {
+    return (
+      <div className="git-tab">
+        <div className="git-publish-card">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ padding: 10, borderRadius: 10, background: 'rgba(6, 182, 212, 0.12)', color: 'var(--accent-cyan)' }}>
+              <Cloud size={24} />
+            </div>
+            <div>
+              <h3 style={{ margin: 0 }}>Publicar este proyecto en GitHub</h3>
+              <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--text-secondary)' }}>
+                Este proyecto aún no está vinculado a un repositorio remoto en GitHub. Inicializa Git y publícalo en tu cuenta con 1 clic.
+              </p>
+            </div>
+          </div>
+
+          <form onSubmit={handlePublish} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
+                Nombre del repositorio en GitHub
+              </label>
+              <input
+                type="text"
+                value={publishName}
+                onChange={e => setPublishName(e.target.value)}
+                placeholder="nombre-del-repo"
+                required
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
+                Descripción (opcional)
+              </label>
+              <input
+                type="text"
+                value={publishDesc}
+                onChange={e => setPublishDesc(e.target.value)}
+                placeholder="Breve descripción del proyecto..."
+              />
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={publishPrivate}
+                onChange={e => setPublishPrivate(e.target.checked)}
+              />
+              <span>Crear como repositorio privado (solo visible para ti)</span>
+            </label>
+
+            <button
+              type="submit"
+              className="primary"
+              disabled={busy === 'publish'}
+              style={{ alignSelf: 'flex-start', marginTop: 6 }}
+            >
+              {busy === 'publish' ? <LoaderCircle className="spin" size={15} /> : <UploadCloud size={15} />}
+              {busy === 'publish' ? 'Creando repositorio y subiendo…' : 'Publicar a mi GitHub'}
+            </button>
+          </form>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="git-tab">
+      <div className="git-status-hero">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+          <div className="git-branch-pill">
+            {/* Sin rama actual el repositorio está en HEAD desacoplado, y decirlo
+                importa: cualquier commit que se haga ahí no pertenece a ninguna
+                rama y es fácil de perder. Antes solo se leía «HEAD». */}
+            <GitFork size={14} /> {gitStatus.currentBranch || 'HEAD desacoplado'}
+          </div>
+          {gitStatus.aheadCount > 0 && (
+            <span className="git-ahead-pill" title="Commits locales pendientes de subir">
+              <ArrowUpRight size={13} /> {gitStatus.aheadCount} por subir
+            </span>
+          )}
+          {gitStatus.behindCount > 0 && (
+            <span className="git-behind-pill" title="Commits en GitHub pendientes de descargar">
+              <DownloadCloud size={13} /> {gitStatus.behindCount} por bajar
+            </span>
+          )}
+          {gitStatus.remoteUrl ? (
+            <button
+              type="button"
+              className="github-link-pill"
+              onClick={() => gitHubRepo?.htmlUrl ? void api.openExternalUrl(gitHubRepo.htmlUrl) : (gitStatus.remoteUrl && void api.openExternalUrl(gitStatus.remoteUrl))}
+              title="Abrir repositorio en GitHub"
+            >
+              <GitHubLogo size={13} color="var(--accent-cyan)" />
+              <span>{gitStatus.remoteUrl.replace('https://github.com/', '').replace('.git', '')}</span>
+              <ArrowUpRight size={12} />
+            </button>
+          ) : (
+            <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>Sin repositorio remoto configurado</span>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button
+            type="button"
+            className="secondary"
+            onClick={loadGitStatus}
+            disabled={loading || !!busy}
+            title="Recargar estado de Git"
+          >
+            <RefreshCw size={14} className={loading ? 'spin' : ''} />
+          </button>
+          {gitStatus.remoteUrl ? (
+            <>
+              <button
+                type="button"
+                className="secondary"
+                onClick={handlePull}
+                disabled={!!busy}
+                title="Descargar cambios de GitHub (git pull)"
+              >
+                {busy === 'pull' ? <LoaderCircle size={14} className="spin" /> : <DownloadCloud size={14} />}
+                Pull
+              </button>
+              <button
+                type="button"
+                className="primary"
+                onClick={handlePush}
+                disabled={!!busy || gitStatus.aheadCount === 0}
+                title="Subir commits a GitHub (git push)"
+              >
+                {busy === 'push' ? <LoaderCircle size={14} className="spin" /> : <UploadCloud size={14} />}
+                Push {gitStatus.aheadCount > 0 ? `(${gitStatus.aheadCount})` : ''}
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="primary"
+              onClick={() => setPublishName(project.name)}
+            >
+              <UploadCloud size={14} /> Publicar en GitHub
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="git-grid-layout">
+        {/* Cambios pendientes & Commit rápido */}
+        <div className="git-card">
+          <div className="git-card-head">
+            <h3>
+              Cambios pendientes {gitStatus.uncommittedChanges.length ? `(${gitStatus.uncommittedChanges.length})` : ''}
+            </h3>
+            {gitStatus.uncommittedChanges.length === 0 ? (
+              <span className="git-clean-note">
+                <Check size={14} /> Directorio de trabajo limpio
+              </span>
+            ) : (
+              <button
+                type="button"
+                className="git-select-all"
+                onClick={() => setExcluded(allSelected ? new Set(changedPaths) : new Set())}
+              >
+                {allSelected ? 'Quitar todos' : 'Seleccionar todos'}
+              </button>
+            )}
+          </div>
+
+          {gitStatus.uncommittedChanges.length > 0 ? (
+            <>
+              {/* Cada archivo se puede dejar fuera del commit. */}
+              <div className="git-file-list">
+                {gitStatus.uncommittedChanges.map(file => {
+                  const included = !excluded.has(file.path)
+                  return (
+                    <label
+                      key={file.path}
+                      className={`git-file-item selectable ${included ? '' : 'excluded'}`}
+                      title={file.path}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={included}
+                        onChange={() => toggleFile(file.path)}
+                        aria-label={`Incluir ${file.path} en el commit`}
+                      />
+                      <span className="git-file-path">{file.path}</span>
+                      <span className={`git-status-tag ${file.status}`}>
+                        {file.status === 'modified' ? 'M' : file.status === 'untracked' || file.status === 'added' ? '+' : file.status === 'deleted' ? 'D' : file.status}
+                      </span>
+                    </label>
+                  )
+                })}
+              </div>
+
+              <form onSubmit={handleCommit} className="commit-composer">
+                <div className="commit-composer-head">
+                  <label htmlFor="commit-message">Mensaje del commit</label>
+                  <span
+                    className={`commit-counter ${commitCounterState(commitMessage.length)}`}
+                    title="Se recomienda que el resumen no pase de 50 caracteres, y nunca de 72"
+                  >
+                    {commitMessage.length}/72
+                  </span>
+                </div>
+                <textarea
+                  id="commit-message"
+                  className="commit-input"
+                  rows={2}
+                  spellCheck={false}
+                  placeholder="fix: corregir el cálculo del total en la factura"
+                  value={commitMessage}
+                  onChange={e => setCommitMessage(e.target.value)}
+                  onKeyDown={e => {
+                    // Enter envía; Mayús+Enter deja escribir un cuerpo largo.
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      void handleCommit(e as unknown as FormEvent)
+                    }
+                  }}
+                  required
+                />
+                <div className="commit-composer-foot">
+                  <span className="commit-selection-note">
+                    {selectedFiles.length === 0
+                      ? 'No has seleccionado ningún archivo'
+                      : `Entran ${selectedFiles.length} de ${changedPaths.length} archivo${changedPaths.length === 1 ? '' : 's'}`}
+                  </span>
+                  <button
+                    type="submit"
+                    className="primary"
+                    disabled={busy === 'commit' || !canCommit(commitMessage, selectedFiles)}
+                  >
+                    {busy === 'commit' ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />}
+                    Hacer commit
+                  </button>
+                </div>
+                {/* El commit es local; subir es el otro botón. */}
+                <p className="commit-composer-hint">
+                  El commit se queda en tu equipo.{' '}
+                  {gitStatus.remoteUrl
+                    ? 'Para publicarlo usa «Push».'
+                    : 'Este proyecto no tiene remoto configurado.'}
+                </p>
+              </form>
+            </>
+          ) : (
+            <p style={{ margin: 0, fontSize: 13, color: 'var(--text-tertiary)' }}>
+              No tienes archivos modificados sin commitear en este proyecto.
+            </p>
+          )}
+
+          {gitStatus.lastCommitMessage && (
+            <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: 10, fontSize: 12, color: 'var(--text-secondary)' }}>
+              <span style={{ color: 'var(--text-tertiary)', display: 'block', fontSize: 11, marginBottom: 2 }}>ÚLTIMO COMMIT</span>
+              <strong>{gitStatus.lastCommitMessage}</strong>
+              <div style={{ display: 'flex', gap: 10, marginTop: 4, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-tertiary)' }}>
+                <span>{gitStatus.lastCommitHash}</span>
+                <span>·</span>
+                <span>{gitStatus.lastCommitDate}</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Ramas Locales y Remotas / Publicar */}
+        <div className="git-card">
+          <h3 style={{ margin: 0, fontSize: 14 }}>Ramas del Proyecto</h3>
+          {gitStatus.branches.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span style={{ fontSize: 11, color: 'var(--text-tertiary)', fontWeight: 700, letterSpacing: '0.05em' }}>RAMAS LOCALES</span>
+              {gitStatus.branches.map(b => (
+                <div
+                  key={b}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '6px 10px',
+                    borderRadius: 6,
+                    background: b === gitStatus.currentBranch ? 'rgba(16, 185, 129, 0.1)' : 'var(--bg-surface-2)',
+                    border: `1px solid ${b === gitStatus.currentBranch ? 'var(--accent-primary-border)' : 'var(--border-subtle)'}`,
+                    fontSize: 12,
+                    fontFamily: 'var(--font-mono)',
+                  }}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: b === gitStatus.currentBranch ? 'var(--accent-primary)' : 'var(--text-primary)' }}>
+                    <GitFork size={13} /> {b}
+                  </span>
+                  {b === gitStatus.currentBranch && (
+                    <span style={{ fontSize: 10, color: 'var(--accent-primary)', fontWeight: 600 }}>ACTIVA</span>
+                  )}
+                </div>
+              ))}
+
+              {gitStatus.remoteBranches.length > 0 && (
+                <>
+                  <span style={{ fontSize: 11, color: 'var(--text-tertiary)', fontWeight: 700, letterSpacing: '0.05em', marginTop: 8 }}>
+                    RAMAS REMOTAS (GITHUB)
+                  </span>
+                  {gitStatus.remoteBranches.map(rb => (
+                    <div
+                      key={rb}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        padding: '6px 10px',
+                        borderRadius: 6,
+                        background: 'var(--bg-surface-2)',
+                        border: '1px solid var(--border-subtle)',
+                        fontSize: 12,
+                        color: 'var(--accent-cyan)',
+                        fontFamily: 'var(--font-mono)',
+                      }}
+                    >
+                      <GitHubLogo size={12} color="var(--accent-cyan)" /> {rb}
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+          ) : (
+            <p style={{ margin: 0, fontSize: 13, color: 'var(--text-tertiary)' }}>Sin ramas registradas.</p>
+          )}
+
+          {!gitStatus.remoteUrl && (
+            <div style={{ marginTop: 'auto', paddingTop: 10, borderTop: '1px solid var(--border-subtle)' }}>
+              <button
+                type="button"
+                className="secondary"
+                style={{ width: '100%', justifyContent: 'center' }}
+                onClick={() => setPublishName(project.name)}
+              >
+                <UploadCloud size={14} /> Publicar este proyecto en GitHub
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
