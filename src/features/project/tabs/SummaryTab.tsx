@@ -5,7 +5,7 @@ import { kindMeta } from '../../../lib/kindMeta'
 import { projectKind } from '../../../lib/projects'
 import type { Project, ProjectDetail } from '../../../types'
 import { CopyButton, Meta } from '../../../components/Primitives'
-import { LastRunPill, StatusDot, StatusPill } from '../../../components/Status'
+import { StatusDot, StatusPill } from '../../../components/Status'
 
 export function SummaryTab({
   project,
@@ -31,15 +31,12 @@ export function SummaryTab({
     project.status === 'running'
       ? 'Proceso Activo'
       : kind === 'script'
-      ? 'Tarea principal'
+      ? 'Cómo se ejecuta'
       : kind === 'notebook'
       ? 'Cuadernos'
       : kind === 'inert'
       ? 'Sin comando de arranque'
       : 'Comando de Inicio'
-  // Un script no está «detenido»: terminó, y con un código. Ese dato ya vivía en
-  // el historial y no se mostraba en ninguna parte.
-  const lastRun = kind === 'script' ? recentCommands.find(command => command.status !== 'running') : undefined
   return (
     <div className="detail-grid">
       <section className="card overview-card">
@@ -48,11 +45,9 @@ export function SummaryTab({
             <p className="eyebrow">{kind === 'service' ? 'COMANDO PRINCIPAL' : kindMeta[kind].label.toUpperCase()}</p>
             <h2>{cardTitle}</h2>
           </div>
-          {kind === 'script' && project.status !== 'running' ? (
-            <LastRunPill record={lastRun} />
-          ) : (
-            <StatusPill status={project.status} />
-          )}
+          {/* En un script no hay estado que mostrar: ni se arranca desde aquí ni
+              queda un proceso vivo del que informar. */}
+          {kind !== 'script' && kind !== 'inert' && <StatusPill status={project.status} />}
         </div>
 
         <div className="command-display">
@@ -66,6 +61,19 @@ export function SummaryTab({
           )}
         </div>
 
+        {/* El panel controla aplicaciones; un script se corre donde toca. Se
+            dice qué comando es y con qué intérprete, para copiarlo y ya. */}
+        {kind === 'script' && (
+          <p className="nota-script">
+            El panel no ejecuta scripts: copia el comando y lánzalo desde la terminal —el botón «Terminal» la
+            abre en esta carpeta—
+            {scan.packageManager === 'pip' || scan.packageManager === 'uv'
+              ? ', que usará el entorno virtual del proyecto'
+              : ''}
+            . Aquí se gestionan sus dependencias, su espacio en disco y su publicación en GitHub.
+          </p>
+        )}
+
         <div className="metadata-grid">
           <Meta label="Gestor" value={scan.packageManager || 'No detectado'} />
           <Meta label="Lockfile" value={scan.lockfile || 'No detectado'} />
@@ -74,6 +82,7 @@ export function SummaryTab({
         </div>
       </section>
 
+      {kind !== 'script' && kind !== 'inert' && (
       <section className="card quick-actions">
         <div className="card-heading">
           <div>
@@ -100,7 +109,10 @@ export function SummaryTab({
           })}
         </div>
       </section>
+      )}
 
+      {/* El historial de ejecuciones solo existe si algo se ejecuta. */}
+      {kind !== 'script' && kind !== 'inert' && (
       <section className="card span-two">
         <div className="card-heading">
           <div>
@@ -131,6 +143,7 @@ export function SummaryTab({
           <p className="empty-inline">Aún no hay ejecuciones registradas para este proyecto.</p>
         )}
       </section>
+      )}
     </div>
   )
 }

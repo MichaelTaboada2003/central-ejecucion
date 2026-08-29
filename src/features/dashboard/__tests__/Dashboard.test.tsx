@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Dashboard } from '../Dashboard'
@@ -65,5 +65,17 @@ describe('Dashboard', () => {
   it('sin proyectos muestra el estado vacío', () => {
     montar({ projects: [], stats: { total: 0, pinned: 0, running: 0, stopped: 0, error: 0, archived: 0 } })
     expect(screen.getByText(/registra tu primer proyecto/i)).toBeTruthy()
+  })
+})
+
+describe('Dashboard: lo que no se ejecuta no dice «Detenido»', () => {
+  it('un script y un repo sin ejecutable muestran qué son, no un estado falso', () => {
+    montar()
+    expect(screen.getByText('Script')).toBeTruthy()
+    expect(screen.getByText('Sin ejecutable')).toBeTruthy()
+    // Los servicios conservan su estado real (el texto también está en el
+    // filtro superior, así que se busca dentro de la tabla).
+    const tabla = document.querySelector('.project-table') as HTMLElement
+    expect(within(tabla).getByText('En ejecución')).toBeTruthy()
   })
 })

@@ -1,5 +1,6 @@
 import { Archive, ArchiveRestore, ChevronRight, CircleStop, HardDrive, Layers, Pin, Play, Plus, RefreshCw, Terminal, Trash2 } from 'lucide-react'
 import { formatBytes, getStackClass } from '../../lib/format'
+import { kindMeta } from '../../lib/kindMeta'
 import { projectKind, type StatusFilter } from '../../lib/projects'
 import { statusLabels } from '../../lib/labels'
 import type { Project } from '../../types'
@@ -195,7 +196,16 @@ export function Dashboard({
                   </span>
 
                   <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <StatusPill status={project.status} />
+                    {/* «Detenido» solo significa algo en lo que se puede
+                        arrancar. Un script o un repo sin ejecutable no están
+                        detenidos: es que no se ejecutan desde aquí. */}
+                    {projectKind(project) === 'script' || projectKind(project) === 'inert' ? (
+                      <span className="estado-no-ejecutable" title={kindMeta[projectKind(project)].hint}>
+                        {kindMeta[projectKind(project)].label}
+                      </span>
+                    ) : (
+                      <StatusPill status={project.status} />
+                    )}
                     {isRunning ? (
                       <button
                         className="danger-outline"

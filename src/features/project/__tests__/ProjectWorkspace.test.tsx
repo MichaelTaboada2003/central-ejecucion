@@ -48,8 +48,7 @@ describe('ProjectWorkspace: la acción principal depende de la naturaleza', () =
     expect(onRun).toHaveBeenCalledWith('dev', undefined)
   })
 
-  it('un script ejecuta SU tarea, no un servidor de desarrollo', async () => {
-    const usuario = userEvent.setup()
+  it('un script NO se ejecuta desde el panel: se gestiona', () => {
     montar({
       project: proyecto({ kind: 'script', port: null, localUrl: null, devCommand: 'python main.py' }),
       scan: {
@@ -57,12 +56,41 @@ describe('ProjectWorkspace: la acción principal depende de la naturaleza', () =
         devCommand: 'python main.py',
         port: null,
         localUrl: null,
+        installedDependencies: true,
+        declaredDependencies: 3,
         scripts: [{ name: 'main.py', command: 'python main.py', source: 'main.py' }],
       } as ProjectDetail['scan'],
     })
-    expect(screen.getByText('Script')).toBeTruthy()
-    await usuario.click(screen.getByRole('button', { name: /ejecutar main\.py/i }))
-    expect(onRun).toHaveBeenCalledWith('script', 'main.py')
+    expect(document.querySelector('.kind-badge')?.textContent).toContain('Script')
+    expect(document.querySelector('.estado-no-ejecutable')?.textContent).toBe('Script')
+    expect(screen.queryByRole('button', { name: /ejecutar/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^run$/i })).toBeNull()
+    expect(screen.getByText(/se ejecuta en la terminal/i)).toBeTruthy()
+  })
+
+  it('un script sí ofrece instalar sus dependencias: eso sí lo gestiona el panel', () => {
+    montar({
+      project: proyecto({ kind: 'script', port: null, localUrl: null, devCommand: 'python main.py' }),
+      scan: {
+        kind: 'script',
+        devCommand: 'python main.py',
+        installedDependencies: false,
+        declaredDependencies: 40,
+        packageManager: 'pip',
+        scripts: [{ name: 'main.py', command: 'python main.py', source: 'main.py' }],
+      } as ProjectDetail['scan'],
+    })
+    expect(screen.getByRole('button', { name: /instalar dependencias/i })).toBeTruthy()
+  })
+
+  it('un script no muestra las pestañas de ejecución', () => {
+    montar({
+      project: proyecto({ kind: 'script', port: null, localUrl: null }),
+      scan: { kind: 'script', installedDependencies: true, declaredDependencies: 3, scripts: [] } as unknown as ProjectDetail['scan'],
+    })
+    const barra = document.querySelector('.tabs') as HTMLElement
+    const pestanas = [...barra.querySelectorAll('button')].map(b => (b.textContent ?? '').trim())
+    expect(pestanas).toEqual(['Resumen', 'Git & GitHub', 'Dependencias', 'Disco y limpieza', 'Configuración'])
   })
 
   it('un cuaderno abre Jupyter Lab', async () => {
@@ -112,7 +140,7 @@ describe('ProjectWorkspace: sin dependencias, el siguiente paso es instalarlas',
     expect(onRun).toHaveBeenCalledWith('install')
   })
 
-  it('con el entorno listo vuelve a ofrecer la ejecución', () => {
+  it('con el entorno listo no queda ningún botón de arranque en un script', () => {
     montar({
       project: proyecto({ kind: 'script', port: null, localUrl: null, devCommand: 'python main.py' }),
       scan: {
@@ -123,7 +151,7 @@ describe('ProjectWorkspace: sin dependencias, el siguiente paso es instalarlas',
         scripts: [{ name: 'main.py', command: 'python main.py', source: 'main.py' }],
       } as ProjectDetail['scan'],
     })
-    expect(screen.getByRole('button', { name: /ejecutar main\.py/i })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /ejecutar/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /instalar dependencias/i })).toBeNull()
   })
 })

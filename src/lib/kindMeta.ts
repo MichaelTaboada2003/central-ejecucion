@@ -12,7 +12,7 @@ export const kindMeta: Record<ProjectKind, { label: string; hint: string; icon: 
   },
   script: {
     label: 'Script',
-    hint: 'Tarea de una pasada: importa cómo termina y cuánto tarda, no un puerto.',
+    hint: 'No se ejecuta desde el panel: aquí se gestionan sus dependencias, su espacio en disco y su publicación en GitHub. Para correrlo, ábrelo en la terminal.',
     icon: FileCode2,
   },
   notebook: {

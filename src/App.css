@@ -2461,6 +2461,30 @@ code, kbd, pre, .mono {
   border-color: var(--accent-amber-border);
 }
 
+/* En la lista, lo que no se ejecuta desde el panel no dice «Detenido»: dice qué
+   es. Un estado que no puede cambiar no es un estado. */
+.estado-no-ejecutable {
+  padding: 3px 9px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font: 600 11px var(--font-mono);
+  white-space: nowrap;
+}
+
+/* El panel gestiona los scripts pero no los ejecuta: se dice ahí mismo, junto al
+   comando, para que nadie busque un botón que no existe. */
+.nota-script {
+  margin: var(--space-3) 0 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface-0);
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 /* ==========================================================================
    PUBLICAR EN GITHUB
    ========================================================================== */

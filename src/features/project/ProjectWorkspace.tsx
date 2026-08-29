@@ -1,5 +1,5 @@
 import { AlertTriangle, AppWindow, Archive, ArchiveRestore, ArrowLeft, ArrowUpRight, Bot, ChevronRight, CircleStop, FileCode2, Folder, FolderOpen, GitFork, HardDrive, LayoutDashboard, LoaderCircle, Lock, PackageOpen, Pin, Play, RefreshCw, RotateCcw, Settings2, SquareTerminal, Terminal, Trash2 } from 'lucide-react'
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { api } from '../../api'
 import { formatDate } from '../../lib/format'
 import { kindMeta } from '../../lib/kindMeta'
@@ -18,6 +18,9 @@ import { ScriptsTab } from './tabs/ScriptsTab'
 import { SummaryTab } from './tabs/SummaryTab'
 
 /** Pestañas del detalle, en el orden en que se muestran. */
+/** Pestañas que solo tienen sentido en algo que se ejecuta desde el panel. */
+const TABS_DE_EJECUCION: Tab[] = ['processes', 'scripts']
+
 const tabs: Array<{ id: Tab; label: string; icon: typeof LayoutDashboard }> = [
   { id: 'summary', label: 'Resumen', icon: LayoutDashboard },
   { id: 'git', label: 'Git & GitHub', icon: GitFork },
@@ -85,34 +88,31 @@ export function ProjectWorkspace({
   // Un script se lanza como la tarea que es, con su propio nombre; sólo un
   // servicio tiene un `dev` que arrancar.
   const primaryAction = useMemo<{ action: 'dev' | 'script' | 'notebook'; script?: string; label: string; title: string } | null>(() => {
-    if (kind === 'inert') return null
+    // Un script se gestiona, no se arranca: el panel es para controlar
+    // aplicaciones. Ejecutarlo es cosa de la terminal, y el comando se muestra
+    // en el Resumen para copiarlo.
+    if (kind === 'inert' || kind === 'script') return null
     if (kind === 'notebook') {
       const hasNotebook = scan.scripts.some(script => script.name === 'notebook')
       return hasNotebook
         ? { action: 'notebook', label: 'Abrir Jupyter Lab', title: 'jupyter lab' }
         : null
     }
-    if (kind === 'script') {
-      // El detector registra el punto de entrada con su propio nombre, pero la
-      // naturaleza tambien se puede forzar a mano sobre cualquier proyecto: se
-      // busca la tarea que corresponde al comando principal antes de adivinar.
-      const task =
-        scan.scripts.find(script => script.command === scan.devCommand) ??
-        scan.scripts.find(script => script.source === script.name) ??
-        scan.scripts.find(script => script.name.endsWith('.py')) ??
-        scan.scripts[0]
-      if (!task) return null
-      const isFile = task.name.includes('.')
-      return {
-        action: 'script',
-        script: task.name,
-        label: isFile ? `Ejecutar ${task.name}` : 'Ejecutar',
-        title: task.command,
-      }
-    }
     return scan.devCommand ? { action: 'dev', label: 'Run', title: scan.devCommand } : null
   }, [kind, scan.scripts, scan.devCommand])
   const servesOverHttp = kind === 'service' || kind === 'notebook'
+  // «Procesos y logs» y «Scripts» solo tienen contenido si algo se ejecuta desde
+  // el panel; en un proyecto que no se ejecuta son dos pestañas vacías.
+  const tabsVisibles = useMemo(
+    () => (kind === 'script' || kind === 'inert' ? tabs.filter(t => !TABS_DE_EJECUCION.includes(t.id)) : tabs),
+    [kind]
+  )
+
+  // Si la pestaña abierta deja de existir al cambiar de naturaleza, se vuelve al
+  // resumen en vez de dejar el contenido en blanco.
+  useEffect(() => {
+    if (!tabsVisibles.some(t => t.id === tab)) setTab('summary')
+  }, [tabsVisibles, tab, setTab])
   // Aunque no haya nada que lanzar, el boton deshabilitado debe seguir hablando
   // el idioma de la naturaleza en vez de un «Ejecutar» genérico.
   const fallbackActionLabel = kind === 'notebook' ? 'Abrir Jupyter Lab' : kind === 'service' ? 'Run' : 'Ejecutar'
@@ -237,9 +237,10 @@ export function ProjectWorkspace({
             de una pasada no tiene un «servidor de desarrollo» que arrancar, y un
             repo sin nada ejecutable no tiene acción ninguna. */}
         <div className="run-actions">
-          {kind === 'inert' ? (
-            <span className="kind-inert-note" title={kindMeta.inert.hint}>
-              <Folder size={14} /> Sin nada que ejecutar en la raíz
+          {kind === 'inert' || (kind === 'script' && !isMissingDeps) ? (
+            <span className="kind-inert-note" title={kindMeta[kind].hint}>
+              {kind === 'script' ? <FileCode2 size={14} /> : <Folder size={14} />}
+              {kind === 'script' ? 'Se gestiona desde aquí; se ejecuta en la terminal' : 'Sin nada que ejecutar en la raíz'}
             </span>
           ) : isRunning ? (
             <>
@@ -284,7 +285,14 @@ export function ProjectWorkspace({
       </div>
 
       <div className="status-strip">
-        <StatusPill status={project.status} />
+        {/* Un estado que no puede cambiar no es un estado. */}
+        {kind === 'script' || kind === 'inert' ? (
+          <span className="estado-no-ejecutable" title={kindMeta[kind].hint}>
+            {kindMeta[kind].label}
+          </span>
+        ) : (
+          <StatusPill status={project.status} />
+        )}
         {process && (
           <>
             <span className="divider" />
@@ -352,7 +360,7 @@ export function ProjectWorkspace({
       </div>
 
       <div className="tabs" role="tablist">
-        {tabs.map(({ id, label, icon: Icon }) => (
+        {tabsVisibles.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             className={tab === id ? 'active' : ''}
