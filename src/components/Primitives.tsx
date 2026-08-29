@@ -1,4 +1,4 @@
-import { Check, Copy, FolderOpen, LoaderCircle, Plus } from 'lucide-react'
+import { Check, Copy, FolderOpen, LoaderCircle, Plus, RotateCcw, Search } from 'lucide-react'
 import { ReactNode, useEffect, useRef, useState } from 'react'
 import type { ProjectStatus } from '../types'
 
@@ -7,14 +7,30 @@ export function StatCard({
   value,
   status,
   icon,
+  onClick,
+  active,
 }: {
   label: string
   value: number
   status: ProjectStatus | 'neutral'
   icon: ReactNode
+  onClick?: () => void
+  active?: boolean
 }) {
   return (
-    <article className={`stat-card ${status}`}>
+    <article
+      className={`stat-card ${status} ${active ? 'active' : ''}`}
+      onClick={onClick}
+      style={{ cursor: onClick ? 'pointer' : 'default' }}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={e => {
+        if (onClick && (e.key === 'Enter' || e.key === ' ')) {
+          e.preventDefault()
+          onClick()
+        }
+      }}
+    >
       <div className="stat-top">
         <div className="stat-icon">{icon}</div>
         <span className="stat-value">{value}</span>
@@ -64,6 +80,36 @@ export function EmptyState({ onRegister }: { onRegister: () => void }) {
       <button className="primary" onClick={onRegister}>
         <Plus size={16} /> Registrar proyecto
       </button>
+    </div>
+  )
+}
+export function NoResultsState({
+  query,
+  statusFilter,
+  onClear,
+}: {
+  query?: string
+  statusFilter?: string
+  onClear?: () => void
+}) {
+  return (
+    <div className="empty-state">
+      <div className="empty-icon" style={{ color: 'var(--text-tertiary)' }}>
+        <Search size={26} />
+      </div>
+      <h3>Sin proyectos que coincidan</h3>
+      <p>
+        {query && statusFilter && statusFilter !== 'all'
+          ? `No hay proyectos con el filtro actual que coincidan con «${query}».`
+          : query
+          ? `Ningún proyecto coincide con «${query}».`
+          : 'No hay proyectos en la categoría de estado seleccionada.'}
+      </p>
+      {onClear && (
+        <button className="secondary" onClick={onClear} style={{ marginTop: 8 }}>
+          <RotateCcw size={14} /> Restablecer filtros y búsqueda
+        </button>
+      )}
     </div>
   )
 }

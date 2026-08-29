@@ -5,11 +5,14 @@ import { projectKind, type StatusFilter } from '../../lib/projects'
 import { statusLabels } from '../../lib/labels'
 import type { Project } from '../../types'
 import { GitHubLogo } from '../../components/GitHubLogo'
-import { EmptyState, StatCard } from '../../components/Primitives'
+import { EmptyState, NoResultsState, StatCard } from '../../components/Primitives'
 import { StatusPill } from '../../components/Status'
 
 export function Dashboard({
   projects,
+  allProjectsCount = 0,
+  query = '',
+  onClearSearch,
   stats,
   onRefreshAll,
   statusFilter,
@@ -25,6 +28,9 @@ export function Dashboard({
   busy,
 }: {
   projects: Project[]
+  allProjectsCount?: number
+  query?: string
+  onClearSearch?: () => void
   stats: { total: number; pinned: number; running: number; stopped: number; error: number; archived: number }
   onRefreshAll: () => void
   statusFilter: StatusFilter
@@ -68,30 +74,40 @@ export function Dashboard({
           value={stats.running}
           status="running"
           icon={<Play size={18} />}
+          active={statusFilter === 'running'}
+          onClick={() => setStatusFilter(statusFilter === 'running' ? 'all' : 'running')}
         />
         <StatCard
           label="Fijados"
           value={stats.pinned}
           status="neutral"
           icon={<Pin size={18} color="var(--accent-amber)" />}
+          active={statusFilter === 'pinned'}
+          onClick={() => setStatusFilter(statusFilter === 'pinned' ? 'all' : 'pinned')}
         />
         <StatCard
           label="Detenidos"
           value={stats.stopped}
           status="stopped"
           icon={<CircleStop size={18} />}
+          active={statusFilter === 'stopped'}
+          onClick={() => setStatusFilter(statusFilter === 'stopped' ? 'all' : 'stopped')}
         />
         <StatCard
           label="Archivados"
           value={stats.archived}
           status="neutral"
           icon={<Archive size={18} color="var(--accent-indigo)" />}
+          active={statusFilter === 'archived'}
+          onClick={() => setStatusFilter(statusFilter === 'archived' ? 'all' : 'archived')}
         />
         <StatCard
           label="Total activos"
           value={stats.total}
           status="neutral"
           icon={<Layers size={18} />}
+          active={statusFilter === 'all'}
+          onClick={() => setStatusFilter('all')}
         />
       </section>
 
@@ -312,8 +328,17 @@ export function Dashboard({
               )
             })}
           </div>
-        ) : (
+        ) : allProjectsCount === 0 ? (
           <EmptyState onRegister={onRegister} />
+        ) : (
+          <NoResultsState
+            query={query}
+            statusFilter={statusFilter}
+            onClear={() => {
+              setStatusFilter('all')
+              onClearSearch?.()
+            }}
+          />
         )}
       </section>
     </>

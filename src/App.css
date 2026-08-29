@@ -560,6 +560,23 @@ code, kbd, pre, .mono {
   font-weight: 600;
 }
 
+.search-clear-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border-radius: 4px;
+  transition: color var(--transition-fast);
+}
+
+.search-clear-btn:hover {
+  color: var(--text-primary);
+}
+
 .command-button, .secondary, .danger-outline {
   height: 38px;
   display: inline-flex;
@@ -731,6 +748,12 @@ code, kbd, pre, .mono {
   transform: translateY(-2px);
   border-color: var(--border-prominent);
   box-shadow: var(--shadow-md);
+}
+
+.stat-card.active {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 1px var(--accent-primary), var(--shadow-md);
+  background: linear-gradient(145deg, var(--bg-surface-2), var(--bg-surface-1));
 }
 
 .stat-top {

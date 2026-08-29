@@ -609,7 +609,22 @@ export default function App() {
                 placeholder="Buscar proyectos, stacks o etiquetas…"
                 aria-label="Buscar proyectos"
               />
-              <kbd>⌘F</kbd>
+              {filter ? (
+                <button
+                  type="button"
+                  className="search-clear-btn"
+                  onClick={() => {
+                    setFilter('')
+                    searchRef.current?.focus()
+                  }}
+                  title="Limpiar búsqueda"
+                  aria-label="Limpiar búsqueda"
+                >
+                  <X size={14} />
+                </button>
+              ) : (
+                <kbd>⌘F</kbd>
+              )}
             </div>
             <button className="command-button" onClick={() => setModal('palette')}>
               <Command size={14} /> Comandos <kbd>⌘K</kbd>
@@ -681,6 +696,9 @@ export default function App() {
           ) : (
             <Dashboard
               projects={visibleProjects}
+              allProjectsCount={projects.length}
+              query={filter}
+              onClearSearch={() => setFilter('')}
               stats={stats}
               onRefreshAll={handleRefreshAll}
               statusFilter={statusFilter}

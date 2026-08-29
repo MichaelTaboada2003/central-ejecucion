@@ -58,13 +58,20 @@ describe('Dashboard', () => {
   it('cambiar de filtro avisa al contenedor en vez de filtrar por su cuenta', async () => {
     const usuario = userEvent.setup()
     const { setStatusFilter } = montar()
-    await usuario.click(screen.getByRole('button', { name: /en ejecución/i }))
+    const grupoFiltros = document.querySelector('.filter-group') as HTMLElement
+    await usuario.click(within(grupoFiltros).getByRole('button', { name: /en ejecución/i }))
     expect(setStatusFilter).toHaveBeenCalledWith('running')
   })
 
-  it('sin proyectos muestra el estado vacío', () => {
-    montar({ projects: [], stats: { total: 0, pinned: 0, running: 0, stopped: 0, error: 0, archived: 0 } })
+  it('sin proyectos en el sistema muestra el estado de registro inicial', () => {
+    montar({ projects: [], allProjectsCount: 0, stats: { total: 0, pinned: 0, running: 0, stopped: 0, error: 0, archived: 0 } })
     expect(screen.getByText(/registra tu primer proyecto/i)).toBeTruthy()
+  })
+
+  it('con proyectos en el sistema pero sin coincidencias muestra el estado de sin resultados', () => {
+    montar({ projects: [], allProjectsCount: 4, query: 'futures', statusFilter: 'archived' })
+    expect(screen.getByRole('heading', { name: /sin proyectos que coincidan/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /restablecer filtros y búsqueda/i })).toBeTruthy()
   })
 })
 
