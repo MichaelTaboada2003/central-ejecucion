@@ -1054,6 +1054,33 @@ impl GitHubService {
         Self::git_push(project_path, token)
     }
 
+    /// GitHub explica en el cuerpo de la respuesta por qué rechaza una creación
+    /// —el nombre ya existe, el token no tiene permiso—. Sin leerlo, el usuario
+    /// solo veía «Error al crear el repositorio: 422».
+    fn describe_api_error(error: ureq::Error, repo_name: &str) -> String {
+        let ureq::Error::Status(codigo, respuesta) = error else {
+            return "No se pudo contactar con GitHub. Revisa tu conexión.".to_string();
+        };
+        let cuerpo: Value = respuesta.into_json().unwrap_or(Value::Null);
+        let detalle = cuerpo
+            .get("errors")
+            .and_then(|e| e.as_array())
+            .and_then(|e| e.first())
+            .and_then(|e| e.get("message"))
+            .and_then(|m| m.as_str())
+            .or_else(|| cuerpo.get("message").and_then(|m| m.as_str()))
+            .unwrap_or("");
+
+        match codigo {
+            401 => "GitHub rechazó el token. Vuelve a configurarlo en Ajustes.".to_string(),
+            403 => format!("GitHub denegó la operación. El token necesita permiso para crear repositorios. {detalle}").trim().to_string(),
+            422 if detalle.contains("already exists") => {
+                format!("Ya tienes un repositorio llamado «{repo_name}» en GitHub. Elige otro nombre.")
+            }
+            _ => format!("GitHub rechazó la creación del repositorio ({codigo}). {detalle}").trim().to_string(),
+        }
+    }
+
     pub fn publish_project_to_github(
         project_path: &Path,
         project_name: &str,
@@ -1078,7 +1105,7 @@ impl GitHubService {
             .set("Authorization", &format!("Bearer {token}"))
             .set("User-Agent", "DevCommandCenter/1.0")
             .send_json(body)
-            .map_err(|error| format!("Error al crear el repositorio en GitHub: {error}"))?;
+            .map_err(|error| Self::describe_api_error(error, &repo_name))?;
 
         let created_repo: Value = response
             .into_json()
@@ -1118,21 +1145,42 @@ impl GitHubService {
             .args(["add", "-A"])
             .output();
 
-        let _ = Self::git(project_path)
+        // Si no hay NADA que subir, el push fallará con un «src refspec main
+        // does not match any» que no explica nada. El motivo casi siempre es que
+        // git no tiene configurados nombre y correo.
+        let commit_out = Self::git(project_path)
             .args(["commit", "-m", "Initial commit from Dev Command Center"])
-            .output();
+            .output()
+            .map_err(|e| format!("Error al crear el commit inicial: {e}"))?;
+        let hay_commits = Self::git(project_path)
+            .args(["rev-parse", "--verify", "HEAD"])
+            .output()
+            .map(|salida| salida.status.success())
+            .unwrap_or(false);
+        if !hay_commits {
+            let detalle = String::from_utf8_lossy(&commit_out.stderr);
+            return Err(format!(
+                "El repositorio se creó en GitHub, pero no se pudo hacer el commit inicial:\n{}",
+                detalle.trim()
+            ));
+        }
 
         // 6. git branch -M main
         let _ = Self::git(project_path)
             .args(["branch", "-M", "main"])
             .output();
 
-        // 7. git push -u origin main (authenticated)
+        // 7. Subida inicial.
+        //
+        // SIN `-u <url>`: eso escribe la URL como rama de seguimiento en
+        // `.git/config`, y esa URL lleva el token dentro. Se sube por la URL
+        // autenticada y después se apunta el seguimiento a `origin`, cuyo valor
+        // guardado está limpio.
         let auth_url = Self::inject_token_into_url(clone_url, token)
             .unwrap_or_else(|| clone_url.to_string());
 
         let push_out = Self::git(project_path)
-            .args(["push", "-u", &auth_url, "main"])
+            .args(["push", &auth_url, "main:main"])
             .output()
             .map_err(|e| format!("Error al subir el repositorio inicial a GitHub: {e}"))?;
 
@@ -1141,6 +1189,10 @@ impl GitHubService {
             let stdout = String::from_utf8_lossy(&push_out.stdout);
             return Err(format!("Repositorio creado en GitHub, pero falló el push inicial:\n{stdout}\n{stderr}"));
         }
+
+        let _ = Self::git(project_path)
+            .args(["branch", "--set-upstream-to=origin/main", "main"])
+            .output();
 
         Ok(GitActionResult {
             success: true,

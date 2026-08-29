@@ -90,6 +90,44 @@ describe('ProjectWorkspace: la acción principal depende de la naturaleza', () =
   })
 })
 
+describe('ProjectWorkspace: sin dependencias, el siguiente paso es instalarlas', () => {
+  it('ofrece instalar en vez de un botón apagado con un consejo escondido', async () => {
+    const usuario = userEvent.setup()
+    montar({
+      project: proyecto({ kind: 'script', port: null, localUrl: null, devCommand: 'python main.py' }),
+      scan: {
+        kind: 'script',
+        devCommand: 'python main.py',
+        port: null,
+        installedDependencies: false,
+        declaredDependencies: 40,
+        packageManager: 'pip',
+        scripts: [{ name: 'main.py', command: 'python main.py', source: 'main.py' }],
+      } as ProjectDetail['scan'],
+    })
+
+    const boton = screen.getByRole('button', { name: /instalar dependencias/i })
+    expect(boton).toHaveProperty('disabled', false)
+    await usuario.click(boton)
+    expect(onRun).toHaveBeenCalledWith('install')
+  })
+
+  it('con el entorno listo vuelve a ofrecer la ejecución', () => {
+    montar({
+      project: proyecto({ kind: 'script', port: null, localUrl: null, devCommand: 'python main.py' }),
+      scan: {
+        kind: 'script',
+        devCommand: 'python main.py',
+        installedDependencies: true,
+        declaredDependencies: 40,
+        scripts: [{ name: 'main.py', command: 'python main.py', source: 'main.py' }],
+      } as ProjectDetail['scan'],
+    })
+    expect(screen.getByRole('button', { name: /ejecutar main\.py/i })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /instalar dependencias/i })).toBeNull()
+  })
+})
+
 describe('ProjectWorkspace: puerto y URL solo donde tienen sentido', () => {
   it('un servicio muestra su puerto y el enlace para abrirlo', () => {
     montar()

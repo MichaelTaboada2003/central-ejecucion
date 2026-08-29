@@ -2,6 +2,7 @@ use crate::domain::{CommandSpec, DeclaredDependency, DetectedScript, ProjectScan
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 pub fn canonical_project_path(raw: &str) -> Result<PathBuf, String> {
     let candidate = Path::new(raw);
@@ -169,16 +170,18 @@ pub fn scan_project(path: &Path) -> Result<ProjectScan, String> {
         }
         if pyproject.is_file() {
             manifests.push("pyproject.toml".to_string());
-            if let Ok(content) = fs::read_to_string(&pyproject) {
+            if let Some(content) = read_manifest(&pyproject) {
                 parse_pyproject_dependencies(&content, &mut scan.dependencies, "pyproject.toml");
             }
         }
         if requirements.is_file() {
             manifests.push("requirements.txt".to_string());
-            if let Ok(req_content) = fs::read_to_string(&requirements) {
+            if let Some(req_content) = read_manifest(&requirements) {
                 for line in req_content.lines() {
                     let trimmed = line.trim();
-                    if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                    // `-r otro.txt`, `-e .` o `--index-url ...` son opciones de
+                    // pip, no paquetes: contarlas inventaba dependencias.
+                    if !trimmed.is_empty() && !trimmed.starts_with('#') && !trimmed.starts_with('-') {
                         let (name, ver) = parse_python_requirement(trimmed);
                         scan.dependencies.push(DeclaredDependency {
                             name,
@@ -193,7 +196,7 @@ pub fn scan_project(path: &Path) -> Result<ProjectScan, String> {
         let python_text = [pyproject.as_path(), requirements.as_path()]
             .iter()
             .filter(|file| file.is_file())
-            .filter_map(|file| fs::read_to_string(file).ok())
+            .filter_map(|file| read_manifest(file))
             .collect::<Vec<_>>()
             .join("\n")
             .to_lowercase();
@@ -252,7 +255,7 @@ pub fn scan_project(path: &Path) -> Result<ProjectScan, String> {
         manifests.push("Cargo.toml".to_string());
         if path.join("Cargo.lock").is_file() && lockfile.is_none() { lockfile = Some("Cargo.lock".into()); }
         frameworks.insert("Rust".to_string());
-        if let Ok(cargo_text) = fs::read_to_string(path.join("Cargo.toml")) {
+        if let Some(cargo_text) = read_manifest(&path.join("Cargo.toml")) {
             parse_cargo_dependencies(&cargo_text, &mut scan.dependencies, "Cargo.toml");
         }
     }
@@ -618,6 +621,37 @@ pub fn adapt_command_for_available_port(mut spec: CommandSpec, port: u16) -> Com
     spec
 }
 
+/// Crea el entorno virtual del proyecto si aún no existe, y devuelve su
+/// intérprete.
+///
+/// Sin esto, «Instalar dependencias» ejecutaba `python3 -m pip install` con el
+/// intérprete del sistema: en macOS falla con «externally-managed-environment»,
+/// y donde no falla ensucia el Python global con las dependencias del proyecto.
+pub fn ensure_python_environment(root: &Path) -> Result<String, String> {
+    let existente = find_python_executable(root);
+    if existente != "python3" {
+        return Ok(existente);
+    }
+
+    let salida = Command::new("python3")
+        .args(["-m", "venv", ".venv"])
+        .current_dir(root)
+        .output()
+        .map_err(|error| format!("No se pudo crear el entorno virtual: {error}"))?;
+    if !salida.status.success() {
+        return Err(format!(
+            "No se pudo crear el entorno virtual con «python3 -m venv .venv»:\n{}",
+            String::from_utf8_lossy(&salida.stderr).trim()
+        ));
+    }
+
+    let creado = find_python_executable(root);
+    if creado == "python3" {
+        return Err("El entorno virtual se creó pero no se encontró su intérprete en «.venv/bin/python».".into());
+    }
+    Ok(creado)
+}
+
 pub fn find_python_executable(path: &Path) -> String {
     let mut candidates = Vec::new();
     if let Ok(entries) = fs::read_dir(path) {
@@ -938,7 +972,10 @@ fn install_command(root: &Path, scan: &ProjectScan) -> Result<CommandSpec, Strin
         // Instalar con el `python3` del sistema deja las dependencias fuera del
         // entorno virtual del proyecto (y en macOS falla por
         // «externally-managed-environment»): se usa el intérprete detectado.
-        Some("pip") => Ok(spec(&find_python_executable(root), &["-m", "pip", "install", "-r", "requirements.txt"])),
+        Some("pip") => {
+            let python = ensure_python_environment(root)?;
+            Ok(spec(&python, &["-m", "pip", "install", "-r", "requirements.txt"]))
+        }
         _ => Err("No se detectó un gestor de dependencias con un comando de instalación seguro.".into()),
     }
 }
@@ -1092,12 +1129,44 @@ fn detect_port(input: &str) -> Option<u16> {
     None
 }
 
+/// Lee un manifiesto sin importar cómo lo guardó el editor.
+///
+/// `fs::read_to_string` falla con UTF-16 y devuelve `Err`, que en varios sitios
+/// se ignoraba en silencio: un `requirements.txt` guardado desde PowerShell
+/// —UTF-16 con BOM— dejaba el proyecto con CERO dependencias detectadas sin que
+/// nada lo dijera.
+pub fn read_manifest(path: &Path) -> Option<String> {
+    let bytes = fs::read(path).ok()?;
+    Some(decode_manifest(&bytes))
+}
+
+fn decode_manifest(bytes: &[u8]) -> String {
+    match bytes {
+        [0xFF, 0xFE, resto @ ..] => decode_utf16(resto, u16::from_le_bytes),
+        [0xFE, 0xFF, resto @ ..] => decode_utf16(resto, u16::from_be_bytes),
+        [0xEF, 0xBB, 0xBF, resto @ ..] => String::from_utf8_lossy(resto).into_owned(),
+        _ => String::from_utf8_lossy(bytes).into_owned(),
+    }
+}
+
+fn decode_utf16(bytes: &[u8], convertir: fn([u8; 2]) -> u16) -> String {
+    let unidades: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|par| convertir([par[0], par[1]]))
+        .collect();
+    String::from_utf16_lossy(&unidades)
+}
+
 fn read_json(path: &Path) -> Result<serde_json::Value, String> {
-    let content = fs::read_to_string(path).map_err(|error| format!("No se pudo leer {}: {error}", path.display()))?;
+    let content = read_manifest(path).ok_or_else(|| format!("No se pudo leer {}", path.display()))?;
     serde_json::from_str(&content).map_err(|error| format!("package.json no contiene JSON válido: {error}"))
 }
 
 fn parse_python_requirement(line: &str) -> (String, Option<String>) {
+    // `requests==2.32  # para la API` y `foo==1.0; python_version < "3.11"`:
+    // ni el comentario ni el marcador de entorno son parte de la versión.
+    let line = line.split('#').next().unwrap_or(line);
+    let line = line.split(';').next().unwrap_or(line).trim();
     let delimiters = ["==", ">=", "<=", "~=", "!=", ">", "<"];
     for delim in delimiters {
         if let Some((pkg, ver)) = line.split_once(delim) {
@@ -1417,6 +1486,71 @@ mod tests {
         assert_eq!(adapted.args, vec!["run", "dev", "--port", "8001"]);
         assert_eq!(adapted.env.get("PORT").map(String::as_str), Some("8001"));
         assert!(adapted.display.contains("8001"));
+    }
+
+    /// «Instalar dependencias» en un proyecto Python sin entorno virtual debe
+    /// crearlo primero: con el intérprete del sistema, macOS lo rechaza por
+    /// «externally-managed-environment» y en el resto ensucia el Python global.
+    #[test]
+    fn installing_python_dependencies_creates_the_virtual_environment() {
+        let directory = tempdir().expect("tempdir");
+        fs::write(directory.path().join("requirements.txt"), "requests==2.32.0\n").expect("requirements");
+        let scan = scan_project(directory.path()).expect("scan");
+        assert_eq!(scan.package_manager.as_deref(), Some("pip"));
+        assert!(!directory.path().join(".venv").exists(), "todavía no hay entorno");
+
+        let comando = command_for_action(directory.path(), &scan, "install", None).expect("install");
+
+        assert!(directory.path().join(".venv").is_dir(), "debe haber creado el entorno");
+        assert!(
+            comando.program.ends_with(".venv/bin/python"),
+            "debe instalar CON el intérprete del entorno, no con el del sistema: {}",
+            comando.program
+        );
+        assert_eq!(comando.args, vec!["-m", "pip", "install", "-r", "requirements.txt"]);
+
+        // Una segunda llamada reutiliza el entorno en vez de recrearlo.
+        let marca = std::fs::metadata(directory.path().join(".venv")).expect("meta").modified().expect("mtime");
+        let otra = command_for_action(directory.path(), &scan, "install", None).expect("install");
+        assert_eq!(otra.program, comando.program);
+        assert_eq!(std::fs::metadata(directory.path().join(".venv")).expect("meta").modified().expect("mtime"), marca);
+    }
+
+    /// Regresión: un `requirements.txt` guardado en UTF-16 —lo que produce
+    /// PowerShell con `>`— hacía fallar `read_to_string`, y el error se ignoraba
+    /// en silencio: el proyecto quedaba con CERO dependencias detectadas
+    /// teniendo cuarenta declaradas.
+    #[test]
+    fn reads_requirements_saved_in_utf16() {
+        let directory = tempdir().expect("tempdir");
+        let contenido = "requests==2.32.0\nBrotli==1.1.0\ncachetools==5.3.2\n";
+        let mut bytes = vec![0xFF, 0xFE];
+        for unidad in contenido.encode_utf16() {
+            bytes.extend_from_slice(&unidad.to_le_bytes());
+        }
+        fs::write(directory.path().join("requirements.txt"), bytes).expect("requirements");
+
+        let scan = scan_project(directory.path()).expect("scan");
+        assert_eq!(scan.declared_dependencies, 3, "las dependencias no se pueden perder por la codificación");
+        assert!(scan.dependencies.iter().any(|d| d.name == "Brotli"), "{:?}", scan.dependencies);
+    }
+
+    /// Un `requirements.txt` trae más cosas que nombres de paquetes.
+    #[test]
+    fn ignores_pip_options_and_inline_comments() {
+        let directory = tempdir().expect("tempdir");
+        fs::write(
+            directory.path().join("requirements.txt"),
+            "# dependencias\n-r comunes.txt\n--index-url https://pypi.org/simple\n-e .\nrequests==2.32.0  # para la API\nnumpy==2.0 ; python_version < \"3.13\"\n",
+        ).expect("requirements");
+
+        let scan = scan_project(directory.path()).expect("scan");
+        // La lista se ordena por nombre, así que se compara el conjunto.
+        let mut nombres: Vec<&str> = scan.dependencies.iter().map(|d| d.name.as_str()).collect();
+        nombres.sort_unstable();
+        assert_eq!(nombres, vec!["numpy", "requests"], "{nombres:?}");
+        let requests = scan.dependencies.iter().find(|d| d.name == "requests").expect("requests");
+        assert_eq!(requests.version.as_deref(), Some("==2.32.0"), "el comentario no es parte de la versión");
     }
 
     #[test]

@@ -252,22 +252,25 @@ export function ProjectWorkspace({
                 </button>
               )}
             </>
+          ) : isMissingDeps ? (
+            /* Sin dependencias instaladas, ejecutar no puede funcionar. En vez
+               de un botón apagado con un consejo en el tooltip, se ofrece el
+               paso que toca: en Python esto además crea el entorno virtual. */
+            <button
+              className="primary"
+              disabled={!!busy}
+              onClick={() => void onRun('install')}
+              title="Instala lo declarado en el manifiesto del proyecto"
+            >
+              {busy === 'run:install' ? <LoaderCircle size={16} className="spin" /> : <PackageOpen size={16} />}
+              Instalar dependencias
+            </button>
           ) : (
             <button
               className="primary"
-              disabled={!!busy || !primaryAction || isMissingDeps}
+              disabled={!!busy || !primaryAction}
               onClick={() => primaryAction && void onRun(primaryAction.action, primaryAction.script)}
-              title={
-                isMissingDeps
-                  ? 'Primero instala las dependencias para desbloquear este botón'
-                  : !primaryAction
-                  ? 'No se detectó ningún comando ejecutable'
-                  : primaryAction.title
-              }
-              style={{
-                opacity: isMissingDeps ? 0.45 : 1,
-                cursor: isMissingDeps ? 'not-allowed' : 'pointer',
-              }}
+              title={primaryAction ? primaryAction.title : 'No se detectó ningún comando ejecutable'}
             >
               {busy?.startsWith('run:') ? (
                 <LoaderCircle size={16} className="spin" />

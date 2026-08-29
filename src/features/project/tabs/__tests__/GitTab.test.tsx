@@ -158,3 +158,44 @@ describe('GitTab: avisar de lo que espera en GitHub', () => {
     expect(api.gitFetch).not.toHaveBeenCalled()
   })
 })
+
+describe('GitTab: publicar en GitHub', () => {
+  it('un proyecto con git pero SIN remoto ofrece el formulario, no un botón que no abre nada', async () => {
+    montar(estadoGit({ remoteUrl: null, remoteName: null, remoteBranches: [] }))
+    expect(await screen.findByLabelText(/nombre del repositorio/i)).toBeTruthy()
+    expect(screen.getByRole('button', { name: /crear repositorio y subir/i })).toBeTruthy()
+  })
+
+  it('el nombre y la visibilidad viajan como los eligió el usuario', async () => {
+    const usuario = userEvent.setup()
+    api.publishToGitHub.mockResolvedValue({ success: true, message: 'Publicado' })
+    montar(estadoGit({ remoteUrl: null, remoteName: null, remoteBranches: [] }))
+
+    const nombre = await screen.findByLabelText(/nombre del repositorio/i)
+    await usuario.clear(nombre)
+    await usuario.type(nombre, 'panel de control')
+    await usuario.click(screen.getByRole('radio', { name: /privado/i }))
+    await usuario.click(screen.getByRole('button', { name: /crear repositorio y subir/i }))
+
+    await waitFor(() => expect(api.publishToGitHub).toHaveBeenCalled())
+    expect(api.publishToGitHub).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 'proj-1', repoName: 'panel-de-control', isPrivate: true })
+    )
+  })
+
+  it('enseña a dónde va a parar, con el nombre ya corregido', async () => {
+    const usuario = userEvent.setup()
+    montar(estadoGit({ remoteUrl: null, remoteName: null, remoteBranches: [] }))
+    const nombre = await screen.findByLabelText(/nombre del repositorio/i)
+    await usuario.clear(nombre)
+    await usuario.type(nombre, 'Mi Proyecto!')
+    expect(screen.getByText(/Mi-Proyecto/)).toBeTruthy()
+  })
+
+  it('sin nombre no se puede publicar', async () => {
+    const usuario = userEvent.setup()
+    montar(estadoGit({ remoteUrl: null, remoteName: null, remoteBranches: [] }))
+    await usuario.clear(await screen.findByLabelText(/nombre del repositorio/i))
+    expect(screen.getByRole('button', { name: /crear repositorio y subir/i })).toHaveProperty('disabled', true)
+  })
+})
