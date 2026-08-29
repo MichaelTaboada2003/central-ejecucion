@@ -64,7 +64,6 @@ describe('ProjectWorkspace: la acción principal depende de la naturaleza', () =
     expect(document.querySelector('.estado-no-ejecutable')?.textContent).toBe('Script')
     expect(screen.queryByRole('button', { name: /ejecutar/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /^run$/i })).toBeNull()
-    expect(screen.getByText(/se ejecuta en la terminal/i)).toBeTruthy()
   })
 
   it('un script sí ofrece instalar sus dependencias: eso sí lo gestiona el panel', () => {
@@ -112,7 +111,6 @@ describe('ProjectWorkspace: la acción principal depende de la naturaleza', () =
       project: proyecto({ kind: 'inert', port: null, localUrl: null, devCommand: null }),
       scan: { kind: 'inert', devCommand: null, port: null, scripts: [] } as unknown as ProjectDetail['scan'],
     })
-    expect(screen.getByText(/sin nada que ejecutar/i)).toBeTruthy()
     expect(screen.queryByRole('button', { name: /^run$/i })).toBeNull()
   })
 })

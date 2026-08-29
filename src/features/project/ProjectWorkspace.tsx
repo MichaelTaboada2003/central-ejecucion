@@ -1,4 +1,4 @@
-import { AlertTriangle, AppWindow, Archive, ArchiveRestore, ArrowLeft, ArrowUpRight, Bot, ChevronRight, CircleStop, FileCode2, Folder, FolderOpen, GitFork, HardDrive, LayoutDashboard, LoaderCircle, PackageOpen, Pin, Play, RefreshCw, RotateCcw, Settings2, SquareTerminal, Terminal, Trash2 } from 'lucide-react'
+import { AlertTriangle, AppWindow, Archive, ArchiveRestore, ArrowLeft, ArrowUpRight, Bot, ChevronRight, CircleStop, FileCode2, FolderOpen, GitFork, HardDrive, LayoutDashboard, LoaderCircle, PackageOpen, Pin, Play, RefreshCw, RotateCcw, Settings2, SquareTerminal, Terminal, Trash2 } from 'lucide-react'
 import { useEffect, useMemo } from 'react'
 import { api } from '../../api'
 import { formatDate } from '../../lib/format'
@@ -111,9 +111,6 @@ export function ProjectWorkspace({
   useEffect(() => {
     if (!tabsVisibles.some(t => t.id === tab)) setTab('summary')
   }, [tabsVisibles, tab, setTab])
-  // Aunque no haya nada que lanzar, el boton deshabilitado debe seguir hablando
-  // el idioma de la naturaleza en vez de un «Ejecutar» genérico.
-  const fallbackActionLabel = kind === 'notebook' ? 'Abrir Jupyter Lab' : kind === 'service' ? 'Run' : 'Ejecutar'
   const KindIcon = kindMeta[kind].icon
   const toolButtons = [
     ['finder', 'Finder', FolderOpen],
@@ -231,12 +228,7 @@ export function ProjectWorkspace({
             de una pasada no tiene un «servidor de desarrollo» que arrancar, y un
             repo sin nada ejecutable no tiene acción ninguna. */}
         <div className="run-actions">
-          {kind === 'inert' || (kind === 'script' && !isMissingDeps) ? (
-            <span className="kind-inert-note" title={kindMeta[kind].hint}>
-              {kind === 'script' ? <FileCode2 size={14} /> : <Folder size={14} />}
-              {kind === 'script' ? 'Se gestiona desde aquí; se ejecuta en la terminal' : 'Sin nada que ejecutar en la raíz'}
-            </span>
-          ) : isRunning ? (
+          {isRunning ? (
             <>
               <button className="danger-outline" disabled={!!busy} onClick={onStop}>
                 <CircleStop size={16} /> Detener
@@ -260,21 +252,21 @@ export function ProjectWorkspace({
               {busy === 'run:install' ? <LoaderCircle size={16} className="spin" /> : <PackageOpen size={16} />}
               Instalar dependencias
             </button>
-          ) : (
+          ) : primaryAction ? (
             <button
               className="primary"
-              disabled={!!busy || !primaryAction}
-              onClick={() => primaryAction && void onRun(primaryAction.action, primaryAction.script)}
-              title={primaryAction ? primaryAction.title : 'No se detectó ningún comando ejecutable'}
+              disabled={!!busy}
+              onClick={() => void onRun(primaryAction.action, primaryAction.script)}
+              title={primaryAction.title}
             >
               {busy?.startsWith('run:') ? (
                 <LoaderCircle size={16} className="spin" />
               ) : (
                 <Play size={16} fill="currentColor" />
               )}
-              {primaryAction?.label ?? fallbackActionLabel}
+              {primaryAction.label}
             </button>
-          )}
+          ) : null}
         </div>
       </div>
 
