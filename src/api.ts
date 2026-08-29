@@ -622,7 +622,30 @@ const mockProjects: Project[] = [
   }
 ]
 
-let memoryProjects = [...mockProjects]
+const MOCK_PROJECTS_STORAGE_KEY = 'dev-command-center-projects'
+
+function loadMockProjects(): Project[] {
+  if (typeof window !== 'undefined') {
+    try {
+      const saved = localStorage.getItem(MOCK_PROJECTS_STORAGE_KEY)
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed
+      }
+    } catch {}
+  }
+  return [...mockProjects]
+}
+
+function persistMockProjects() {
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem(MOCK_PROJECTS_STORAGE_KEY, JSON.stringify(memoryProjects))
+    } catch {}
+  }
+}
+
+let memoryProjects = loadMockProjects()
 
 const mockIdeSettings: IdeSettings = {
   tools: [
@@ -678,12 +701,14 @@ export const api = {
       lastError: null,
     }
     memoryProjects.unshift(newProj)
+    persistMockProjects()
     return newProj
   },
 
   unregisterProject: async (projectId: string): Promise<void> => {
     if (isTauri) return invoke<void>('unregister_project', { projectId })
     memoryProjects = memoryProjects.filter(p => p.id !== projectId)
+    persistMockProjects()
   },
 
   getProjectDetail: async (projectId: string): Promise<ProjectDetail> => {
@@ -776,20 +801,31 @@ export const api = {
   deleteProject: async (projectId: string, deleteFiles: boolean): Promise<void> => {
     if (isTauri) return invoke<void>('delete_project', { request: { projectId, deleteFiles } })
     const idx = memoryProjects.findIndex(p => p.id === projectId)
-    if (idx !== -1) memoryProjects.splice(idx, 1)
+    if (idx !== -1) {
+      memoryProjects.splice(idx, 1)
+      persistMockProjects()
+    }
   },
 
   togglePinProject: async (projectId: string, isPinned: boolean): Promise<boolean> => {
     if (isTauri) return invoke<boolean>('toggle_pin_project', { projectId, isPinned })
     const proj = memoryProjects.find(p => p.id === projectId)
-    if (proj) proj.isPinned = isPinned
+    if (proj) {
+      proj.isPinned = isPinned
+      if (isPinned) proj.isArchived = false
+      persistMockProjects()
+    }
     return isPinned
   },
 
   toggleArchiveProject: async (projectId: string, isArchived: boolean): Promise<boolean> => {
     if (isTauri) return invoke<boolean>('toggle_archive_project', { projectId, isArchived })
     const proj = memoryProjects.find(p => p.id === projectId)
-    if (proj) proj.isArchived = isArchived
+    if (proj) {
+      proj.isArchived = isArchived
+      if (isArchived) proj.isPinned = false
+      persistMockProjects()
+    }
     return isArchived
   },
 
@@ -997,6 +1033,7 @@ export const api = {
       lastError: null,
     }
     memoryProjects.unshift(newProj)
+    persistMockProjects()
     return newProj
   },
 
@@ -1004,6 +1041,7 @@ export const api = {
     if (isTauri) return invoke<SafeOffloadResult>('safe_offload_project', { projectId, force })
     const proj = memoryProjects.find(p => p.id === projectId)
     memoryProjects = memoryProjects.filter(p => p.id !== projectId)
+    persistMockProjects()
     return {
       success: true,
       projectId,
