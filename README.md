@@ -125,7 +125,3 @@ Dev Command Center incluye un servidor **MCP (Model Context Protocol)** integrad
 Consulta la documentación detallada en [`mcp/README.md`](mcp/README.md).
 
 ---
-
-## 📄 Licencia
-
-Desarrollado bajo licencia privada para uso en entornos de desarrollo ágiles y control de ejecución local.
