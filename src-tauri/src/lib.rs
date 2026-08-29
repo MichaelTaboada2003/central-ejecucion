@@ -140,7 +140,6 @@ pub fn run() {
             commands::projects::delete_project,
             commands::projects::unregister_project,
             commands::projects::toggle_pin_project,
-            commands::projects::set_project_kind,
             commands::projects::toggle_archive_project,
             // run
             commands::run::run_project,

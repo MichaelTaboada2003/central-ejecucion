@@ -28,10 +28,9 @@ export interface Project {
   lastError: string | null
   isPinned?: boolean
   isArchived?: boolean
-  /** Naturaleza deducida por el detector en el último escaneo. */
+  /** Cómo trata el panel al proyecto. Se deduce del contenido de la carpeta en
+   *  cada escaneo; no se puede forzar a mano. */
   kind?: ProjectKind
-  /** Naturaleza forzada por el usuario; manda sobre la deducida. */
-  kindOverride?: ProjectKind | null
 }
 
 export interface DetectedScript {

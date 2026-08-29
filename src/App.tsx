@@ -18,7 +18,6 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
 
-import { kindMeta } from './lib/kindMeta'
 import { type StatusFilter } from './lib/projects'
 import { useGitHub } from './hooks/useGitHub'
 import { reportError, useNotices } from './hooks/useNotices'
@@ -43,7 +42,6 @@ import type {
   GitHubRepo,
   IdeSettings,
   Project,
-  ProjectKind,
 } from './types'
 import './App.css'
 
@@ -71,7 +69,7 @@ export default function App() {
   const selectFirst = useCallback((projectId: string) => setSelectedId(projectId), [])
 
   const {
-    projects, loading, loadProjects, togglePin, toggleArchive, setKind, refreshAll,
+    projects, loading, loadProjects, togglePin, toggleArchive, refreshAll,
     groups: { pinnedProjects, activeProjects, archivedProjects },
     visibleProjects, stats,
   } = useProjects({ notify, onSelect: selectFirst, query: filter, statusFilter })
@@ -129,9 +127,6 @@ export default function App() {
     if (!project.isArchived) setShowArchivedSidebar(true)
     return toggleArchive(project)
   }
-
-  const handleKindChange = (project: Project, kind: ProjectKind | null) =>
-    setKind(project, kind, kind ? kindMeta[kind].label : '')
 
   const action = async (name: string, operation: () => Promise<unknown>) => {
     setBusy(name)
@@ -661,7 +656,6 @@ export default function App() {
               onDeleteProject={setDeleteCandidate}
               onTogglePin={handleTogglePin}
               onToggleArchive={handleToggleArchive}
-              onKindChange={handleKindChange}
             />
           ) : viewMode === 'github' ? (
             <GitHubHubView

@@ -1,4 +1,4 @@
-import { AlertTriangle, AppWindow, Archive, ArchiveRestore, ArrowLeft, ArrowUpRight, Bot, ChevronRight, CircleStop, FileCode2, Folder, FolderOpen, GitFork, HardDrive, LayoutDashboard, LoaderCircle, Lock, PackageOpen, Pin, Play, RefreshCw, RotateCcw, Settings2, SquareTerminal, Terminal, Trash2 } from 'lucide-react'
+import { AlertTriangle, AppWindow, Archive, ArchiveRestore, ArrowLeft, ArrowUpRight, Bot, ChevronRight, CircleStop, FileCode2, Folder, FolderOpen, GitFork, HardDrive, LayoutDashboard, LoaderCircle, PackageOpen, Pin, Play, RefreshCw, RotateCcw, Settings2, SquareTerminal, Terminal, Trash2 } from 'lucide-react'
 import { useEffect, useMemo } from 'react'
 import { api } from '../../api'
 import { formatDate } from '../../lib/format'
@@ -6,7 +6,7 @@ import { kindMeta } from '../../lib/kindMeta'
 import { projectKind } from '../../lib/projects'
 import type { Tab } from '../../hooks/useProjectDetail'
 import type { TerminalEntry } from '../../lib/logs'
-import type { DiskReport, GitHubRepo, Project, ProjectDetail, ProjectKind } from '../../types'
+import type { DiskReport, GitHubRepo, Project, ProjectDetail } from '../../types'
 import { GitHubLogo } from '../../components/GitHubLogo'
 import { StatusPill } from '../../components/Status'
 import { ConfigurationTab } from './tabs/ConfigurationTab'
@@ -53,7 +53,6 @@ export function ProjectWorkspace({
   onDeleteProject,
   onTogglePin,
   onToggleArchive,
-  onKindChange,
 }: {
   detail: ProjectDetail
   gitHubRepo?: GitHubRepo
@@ -79,7 +78,6 @@ export function ProjectWorkspace({
   onDeleteProject: (project: Project) => void
   onTogglePin: (project: Project) => void
   onToggleArchive: (project: Project) => void
-  onKindChange: (project: Project, kind: ProjectKind | null) => Promise<void> | void
 }) {
   const { project, scan, process, recentCommands } = detail
   const isRunning = project.status === 'running'
@@ -194,13 +192,9 @@ export function ProjectWorkspace({
             <p style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <span>{project.projectType}</span>
               <span>·</span>
-              <span
-                className={`kind-badge ${kind}`}
-                title={`${kindMeta[kind].hint}${project.kindOverride ? ' (fijado a mano)' : ' Se puede cambiar en Configuración.'}`}
-              >
+              <span className={`kind-badge ${kind}`} title={kindMeta[kind].hint}>
                 <KindIcon size={11} />
                 {kindMeta[kind].label}
-                {project.kindOverride ? <Lock size={9} /> : null}
               </span>
               <span>·</span>
               {gitHubRepo ? (
@@ -406,14 +400,7 @@ export function ProjectWorkspace({
         <DiskTab disk={disk} onLoad={onDisk} onPreviewCleanup={onPreviewCleanup} busy={busy} />
       )}
       {tab === 'scripts' && <ScriptsTab scripts={scan.scripts} onRun={onRun} busy={busy} />}
-      {tab === 'configuration' && (
-        <ConfigurationTab
-          project={project}
-          scan={scan}
-          onNotify={onNotify}
-          onKindChange={kind => onKindChange(project, kind)}
-        />
-      )}
+      {tab === 'configuration' && <ConfigurationTab project={project} scan={scan} onNotify={onNotify} />}
     </>
   )
 }

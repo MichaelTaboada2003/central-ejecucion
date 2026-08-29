@@ -31,7 +31,6 @@ function montar(over: Partial<ProjectDetail> = {}) {
     onDeleteProject: vi.fn(),
     onTogglePin: vi.fn(),
     onToggleArchive: vi.fn(),
-    onKindChange: vi.fn(),
   }
   render(<ProjectWorkspace {...props} />)
   return props
@@ -173,8 +172,8 @@ describe('ProjectWorkspace: puerto y URL solo donde tienen sentido', () => {
     expect(screen.queryByRole('button', { name: /abrir http/i })).toBeNull()
   })
 
-  it('la naturaleza fijada a mano manda sobre la deducida', () => {
-    montar({ project: proyecto({ kind: 'script', kindOverride: 'service' }) })
-    expect(screen.getByText('Servicio')).toBeTruthy()
+  it('la naturaleza que se muestra es la deducida por el detector', () => {
+    montar({ project: proyecto({ kind: 'service' }) })
+    expect(document.querySelector('.kind-badge')?.textContent).toContain('Servicio')
   })
 })

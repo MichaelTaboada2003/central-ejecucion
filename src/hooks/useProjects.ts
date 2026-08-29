@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import { countProjects, filterByStatus, groupProjects, searchProjects, type StatusFilter } from '../lib/projects'
-import type { Project, ProjectKind } from '../types'
+import type { Project } from '../types'
 import { reportError, type NoticeKind } from './useNotices'
 
 interface Options {
@@ -91,23 +91,6 @@ export function useProjects({ notify, onSelect, query, statusFilter }: Options) 
     [loadProjects, notify, patch]
   )
 
-  const setKind = useCallback(
-    async (project: Project, kind: ProjectKind | null, kindLabel: string) => {
-      try {
-        const updated = await api.setProjectKind(project.id, kind)
-        patch(project.id, updated)
-        notify(
-          kind
-            ? `«${project.name}» se tratará como ${kindLabel.toLowerCase()}.`
-            : `«${project.name}» vuelve a la naturaleza deducida automáticamente.`
-        )
-      } catch (error) {
-        reportError(error)
-      }
-    },
-    [notify, patch]
-  )
-
   const refreshAll = useCallback(async () => {
     const refreshed = await api.refreshAllProjects()
     signature.current = JSON.stringify(refreshed)
@@ -130,7 +113,6 @@ export function useProjects({ notify, onSelect, query, statusFilter }: Options) 
     loadProjects,
     togglePin,
     toggleArchive,
-    setKind,
     refreshAll,
     groups,
     searchedProjects,

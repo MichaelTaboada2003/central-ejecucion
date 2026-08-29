@@ -22,10 +22,10 @@ export interface ProjectGroups {
   archivedProjects: Project[]
 }
 
-/** Naturaleza que manda: la elegida a mano si la hay, y `service` para las filas
- *  de bases anteriores a que el campo existiera. */
+/** Cómo trata el panel a este proyecto. `service` para las filas de bases
+ *  anteriores a que el campo existiera. */
 export function projectKind(project: Project): ProjectKind {
-  return project.kindOverride ?? project.kind ?? 'service'
+  return project.kind ?? 'service'
 }
 
 /** Busca en nombre, ruta, tipo, frameworks y etiquetas. */

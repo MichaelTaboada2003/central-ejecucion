@@ -34,13 +34,9 @@ const lista: Project[] = [
 ]
 
 describe('projectKind', () => {
-  it('la elección manual manda sobre la deducida', () => {
-    const p = proyecto({ id: 'x', kind: 'script', kindOverride: 'service' })
-    expect(projectKind(p)).toBe('service')
-  })
-
-  it('usa la deducida cuando no hay elección manual', () => {
+  it('es la que dedujo el detector: no hay forma de contradecirla', () => {
     expect(projectKind(proyecto({ id: 'x', kind: 'notebook' }))).toBe('notebook')
+    expect(projectKind(proyecto({ id: 'x', kind: 'script' }))).toBe('script')
   })
 
   it('las filas de bases antiguas, sin el campo, se tratan como servicio', () => {

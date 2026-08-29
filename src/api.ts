@@ -13,7 +13,6 @@ import type {
   ProcessInfo,
   Project,
   ProjectDetail,
-  ProjectKind,
   PublishToGitHubRequest,
   RunProjectRequest,
   SafeOffloadResult,
@@ -795,14 +794,6 @@ export const api = {
   },
 
 
-
-  setProjectKind: async (projectId: string, kind: ProjectKind | null): Promise<Project> => {
-    if (isTauri) return invoke<Project>('set_project_kind', { projectId, kind })
-    const proj = memoryProjects.find(p => p.id === projectId)
-    if (!proj) throw new Error('Proyecto no encontrado')
-    proj.kindOverride = kind
-    return proj
-  },
 
   runProject: async (request: RunProjectRequest): Promise<ProcessInfo> => {
     if (isTauri) return invoke<ProcessInfo>('run_project', { request })

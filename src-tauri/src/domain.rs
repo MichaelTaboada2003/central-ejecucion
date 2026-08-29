@@ -25,21 +25,14 @@ pub struct Project {
     pub is_pinned: bool,
     #[serde(default)]
     pub is_archived: bool,
-    /// Naturaleza deducida por el detector en el último escaneo.
+    /// Cómo se trata el proyecto. Se deduce del contenido de la carpeta en cada
+    /// escaneo y NO se puede forzar a mano: la naturaleza decide qué acciones
+    /// ofrece el panel, y permitir contradecir al detector deja estados
+    /// imposibles —un «servicio» sin comando de arranque tendría un botón de
+    /// arrancar que no puede funcionar—. Si el detector se equivoca, se arregla
+    /// el detector.
     #[serde(default)]
     pub kind: ProjectKind,
-    /// Naturaleza forzada por el usuario. Ningún clasificador automático acierta
-    /// siempre —hay scripts que arrancan un servidor— así que la deducción es un
-    /// valor por omisión, no una jaula.
-    #[serde(default)]
-    pub kind_override: Option<ProjectKind>,
-}
-
-impl Project {
-    /// Naturaleza que manda de verdad: la elegida por el usuario si la hay.
-    pub fn effective_kind(&self) -> ProjectKind {
-        self.kind_override.unwrap_or(self.kind)
-    }
 }
 
 /// Cómo debe tratarse un proyecto. El panel asumía que todo era un servidor de

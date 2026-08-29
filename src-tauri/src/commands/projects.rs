@@ -1,6 +1,6 @@
 //! Comandos del registro de proyectos: listar, registrar, reescanear y las
 //! banderas que se cambian desde la interfaz (fijado, archivado, naturaleza).
-use crate::domain::{ProcessInfo, Project, ProjectDetail, ProjectKind, ProjectStatus, RegisterProjectRequest};
+use crate::domain::{ProcessInfo, Project, ProjectDetail, ProjectStatus, RegisterProjectRequest};
 use crate::probe::{is_project_running, update_projects_status_batch};
 use crate::scanner::{canonical_project_path, scan_project};
 use crate::{absolute_input_path, disk, storage, trusted_project_root, AppState, DeleteProjectRequest};
@@ -31,7 +31,7 @@ pub fn register_project(request: RegisterProjectRequest, state: tauri::State<'_,
         .unwrap_or_else(|| root.file_name().and_then(|name| name.to_str()).unwrap_or("Proyecto sin nombre").to_string());
     let mut project = Project {
         id: Uuid::new_v4().to_string(), name: name.trim().to_string(), path, canonical_path,
-        project_type: scan.project_type, kind: scan.kind, kind_override: None, frameworks: scan.frameworks, package_manager: scan.package_manager,
+        project_type: scan.project_type, kind: scan.kind, frameworks: scan.frameworks, package_manager: scan.package_manager,
         dev_command: scan.dev_command, build_command: scan.build_command, test_command: scan.test_command,
         local_url: scan.local_url, port: scan.port, status: ProjectStatus::Stopped, last_used_at: None,
         disk_size_bytes: report.total_bytes, tags: request.tags.into_iter().map(|tag| tag.trim().to_string()).filter(|tag| !tag.is_empty()).collect(),
@@ -164,27 +164,6 @@ pub fn unregister_project(project_id: String, state: tauri::State<'_, AppState>)
 #[tauri::command(async)]
 pub fn toggle_pin_project(project_id: String, is_pinned: bool, state: tauri::State<'_, AppState>) -> Result<bool, String> {
     state.with_storage(|db| db.toggle_project_pin(&project_id, is_pinned))
-}
-
-/// Fija la naturaleza del proyecto a mano, o vuelve a la deducida con `None`.
-/// Ningun clasificador automatico acierta siempre: hay scripts que arrancan un
-/// servidor y monorepos que si tienen algo ejecutable en la raiz.
-#[tauri::command(async)]
-pub fn set_project_kind(project_id: String, kind: Option<String>, state: tauri::State<'_, AppState>) -> Result<Project, String> {
-    let parsed = match kind.as_deref() {
-        None | Some("") | Some("auto") => None,
-        Some(value) => {
-            let parsed = ProjectKind::from_db(value);
-            if parsed.as_str() != value {
-                return Err(format!("Naturaleza de proyecto no reconocida: «{value}»."));
-            }
-            Some(parsed)
-        }
-    };
-        state.with_storage(|db| {
-        db.set_project_kind_override(&project_id, parsed)?;
-        db.get_project(&project_id)
-    })
 }
 
 #[tauri::command(async)]
