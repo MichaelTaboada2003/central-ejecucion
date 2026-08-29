@@ -43,6 +43,22 @@ export function DependenciesTab({
     copyTimer.current = window.setTimeout(() => setCopiedDep(null), 1500)
   }
 
+  const estadoEntorno = useMemo(() => {
+    if (scan.declaredDependencies === 0) {
+      return { tono: 'neutro' as const, texto: 'Este proyecto no declara dependencias.' }
+    }
+    if (scan.installedDependencies) {
+      return {
+        tono: 'good' as const,
+        texto: scan.environmentDir
+          ? `Dependencias instaladas en «${scan.environmentDir}».`
+          : 'Dependencias resueltas: esta pila no las guarda dentro del proyecto.',
+      }
+    }
+    const faltan = scan.missingEnvironment?.length ? scan.missingEnvironment.join(' y ') : 'el entorno'
+    return { tono: 'warn' as const, texto: `Falta ${faltan}: las dependencias declaradas todavía no están instaladas.` }
+  }, [scan.declaredDependencies, scan.installedDependencies, scan.environmentDir, scan.missingEnvironment])
+
   return (
     <div className="detail-grid">
       <section className="card span-two">
@@ -54,8 +70,16 @@ export function DependenciesTab({
           <button
             className="primary"
             onClick={() => void onRun('install')}
-            disabled={!!busy || (scan.declaredDependencies === 0 && !scan.packageManager && scan.manifests.length === 0)}
-            title={scan.installedDependencies ? 'Reinstalar o sincronizar dependencias' : 'Instalar dependencias del proyecto'}
+            disabled={!!busy || scan.declaredDependencies === 0 || !scan.packageManager}
+            title={
+              scan.declaredDependencies === 0
+                ? 'Este proyecto no declara dependencias'
+                : !scan.packageManager
+                  ? 'No se detectó un gestor de paquetes con el que instalar'
+                  : scan.installedDependencies
+                    ? 'Reinstalar o sincronizar dependencias'
+                    : 'Instalar dependencias del proyecto'
+            }
           >
             {busy === 'run:install' ? (
               <LoaderCircle size={15} className="spin" />
@@ -67,13 +91,18 @@ export function DependenciesTab({
         </div>
 
         <div className="dependency-status">
-          <div className={scan.installedDependencies ? 'status-check good' : 'status-check'}>
-            {scan.installedDependencies ? <Check size={18} /> : <AlertTriangle size={18} />}
-            <span>
-              {scan.installedDependencies
-                ? 'Entorno local instalado y verificado.'
-                : 'No se detectó el directorio de dependencias (node_modules o .venv).'}
-            </span>
+          {/* Tres estados, no dos: «no declara nada» no es lo mismo que «está
+              todo instalado», y cuando falta algo se nombra el directorio de
+              ESTA pila en vez de una lista fija de node_modules y .venv. */}
+          <div className={`status-check ${estadoEntorno.tono}`}>
+            {estadoEntorno.tono === 'good' ? (
+              <Check size={18} />
+            ) : estadoEntorno.tono === 'warn' ? (
+              <AlertTriangle size={18} />
+            ) : (
+              <PackageOpen size={18} />
+            )}
+            <span>{estadoEntorno.texto}</span>
           </div>
 
           <div className="metadata-grid">

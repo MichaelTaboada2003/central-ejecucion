@@ -1642,6 +1642,15 @@ code, kbd, pre, .mono {
   border-color: var(--accent-primary-border);
 }
 
+/* «No declara dependencias» no es un aviso: es un hecho. El ámbar de la clase
+   base convertía en alarma algo perfectamente normal. */
+.status-check.neutro {
+  color: var(--text-secondary);
+  background: var(--bg-surface-0);
+  border-color: var(--border-muted);
+  font-weight: 500;
+}
+
 .safety-note {
   display: flex;
   align-items: flex-start;

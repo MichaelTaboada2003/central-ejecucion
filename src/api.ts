@@ -749,7 +749,18 @@ export const api = {
         port: proj.port,
         declaredDependencies: defaultDeps.length,
         dependencies: defaultDeps,
-        installedDependencies: true,
+        // Los tres estados del entorno, para poder verlos en modo navegador.
+        installedDependencies: (proj.diskSizeBytes ?? 0) > 100_000_000,
+        environmentDir:
+          (proj.diskSizeBytes ?? 0) > 100_000_000
+            ? proj.packageManager === 'pnpm' || proj.packageManager === 'npm'
+              ? 'node_modules'
+              : '.venv'
+            : null,
+        missingEnvironment:
+          (proj.diskSizeBytes ?? 0) > 100_000_000
+            ? []
+            : [proj.packageManager === 'pip' || proj.packageManager === 'uv' ? '.venv' : 'node_modules'],
       },
       process:
         proj.status === 'running'

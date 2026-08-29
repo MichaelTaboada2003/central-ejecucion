@@ -138,6 +138,14 @@ pub struct ProjectScan {
     pub declared_dependencies: usize,
     pub dependencies: Vec<DeclaredDependency>,
     pub installed_dependencies: bool,
+    /// Directorio donde están de verdad las dependencias instaladas
+    /// (`node_modules`, `.venv312`, `vendor`, `target`…), si se encontró.
+    #[serde(default)]
+    pub environment_dir: Option<String>,
+    /// Qué directorios se buscaron y faltan. Sin esto la interfaz tenía que
+    /// adivinar, y decía «node_modules o .venv» hasta en proyectos de Rust.
+    #[serde(default)]
+    pub missing_environment: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

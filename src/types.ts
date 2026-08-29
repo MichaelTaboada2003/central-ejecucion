@@ -62,6 +62,10 @@ export interface ProjectScan {
   declaredDependencies: number
   dependencies: DeclaredDependency[]
   installedDependencies: boolean
+  /** Directorio donde están las dependencias instaladas, si se encontró. */
+  environmentDir?: string | null
+  /** Directorios que se buscaron y faltan, ya con el nombre de esta pila. */
+  missingEnvironment?: string[]
 }
 
 export interface ProcessInfo {

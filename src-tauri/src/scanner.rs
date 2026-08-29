@@ -397,78 +397,13 @@ pub fn scan_project(path: &Path) -> Result<ProjectScan, String> {
 
     scan.declared_dependencies = scan.dependencies.len();
 
-    // Verify installed dependencies
-    let has_node = types.iter().any(|t| t == "Node.js");
-    let has_python = types.iter().any(|t| t == "Python");
-    let has_php = types.iter().any(|t| t == "PHP");
-    let has_rust = types.iter().any(|t| t == "Rust");
-
-    scan.installed_dependencies = if scan.declared_dependencies == 0 {
-        true
-    } else {
-        let mut node_ok = !has_node;
-        if has_node {
-            if path.join("node_modules").is_dir() {
-                node_ok = true;
-            } else {
-                for (_, sub) in &subprojects {
-                    if sub.join("node_modules").is_dir() {
-                        node_ok = true;
-                        break;
-                    }
-                }
-            }
-        }
-
-        let mut python_ok = !has_python;
-        if has_python {
-            if path.join(".venv").is_dir()
-                || path.join(".venv312").is_dir()
-                || path.join(".venv311").is_dir()
-                || path.join(".venv310").is_dir()
-                || path.join("venv").is_dir()
-                || path.join("env").is_dir()
-                || find_python_executable(path) != "python3"
-            {
-                python_ok = true;
-            } else {
-                for (_, sub) in &subprojects {
-                    if sub.join(".venv").is_dir()
-                        || sub.join(".venv312").is_dir()
-                        || sub.join(".venv311").is_dir()
-                        || sub.join(".venv310").is_dir()
-                        || sub.join("venv").is_dir()
-                        || sub.join("env").is_dir()
-                        || find_python_executable(sub) != "python3"
-                    {
-                        python_ok = true;
-                        break;
-                    }
-                }
-            }
-        }
-
-        let mut php_ok = !has_php;
-        if has_php {
-            if path.join("vendor").is_dir() {
-                php_ok = true;
-            } else {
-                for (_, sub) in &subprojects {
-                    if sub.join("vendor").is_dir() {
-                        php_ok = true;
-                        break;
-                    }
-                }
-            }
-        }
-
-        let mut rust_ok = !has_rust;
-        if has_rust {
-            rust_ok = path.join("Cargo.lock").is_file() || path.join("target").is_dir();
-        }
-
-        node_ok && python_ok && php_ok && rust_ok
-    };
+    // Dónde están (o deberían estar) las dependencias instaladas. Se devuelve la
+    // evidencia, no solo un sí/no: la interfaz necesita nombrar el directorio
+    // que corresponde a ESTE proyecto, no una lista fija.
+    let entorno = detect_dependency_environment(path, &types, &subprojects, scan.declared_dependencies);
+    scan.installed_dependencies = entorno.instalado;
+    scan.environment_dir = entorno.encontrado;
+    scan.missing_environment = entorno.faltan;
 
     if types.is_empty() && has_loose_python_sources(path) {
         types.push("Python".to_string());
@@ -791,6 +726,93 @@ fn has_notebook(path: &Path) -> bool {
         entry.file_type().is_ok_and(|kind| kind.is_file())
             && entry.path().extension().is_some_and(|extension| extension == "ipynb")
     })
+}
+
+/// Nombres de entorno por pila, en orden de preferencia.
+const ENTORNOS_PYTHON: [&str; 6] = [".venv", ".venv312", ".venv311", ".venv310", "venv", "env"];
+
+struct EntornoDependencias {
+    instalado: bool,
+    encontrado: Option<String>,
+    faltan: Vec<String>,
+}
+
+/// Busca el directorio de dependencias de cada pila presente en el proyecto.
+///
+/// Devuelve TAMBIEN qué se buscó y no estaba: sin ese dato la interfaz solo
+/// podía enseñar un mensaje fijo que hablaba de `node_modules` y `.venv` aunque
+/// el proyecto fuera de Rust o de PHP.
+fn detect_dependency_environment(
+    path: &Path,
+    types: &[String],
+    subprojects: &[(String, PathBuf)],
+    declared: usize,
+) -> EntornoDependencias {
+    if declared == 0 {
+        // Nada declarado: no hay entorno que buscar ni que echar en falta.
+        return EntornoDependencias { instalado: true, encontrado: None, faltan: Vec::new() };
+    }
+
+    let mut encontrado = None;
+    let mut faltan = Vec::new();
+    let mut instalado = true;
+
+    let en_alguna_parte = |nombre: &str| -> bool {
+        path.join(nombre).is_dir() || subprojects.iter().any(|(_, sub)| sub.join(nombre).is_dir())
+    };
+    let archivo_en_alguna_parte = |nombre: &str| -> bool {
+        path.join(nombre).is_file() || subprojects.iter().any(|(_, sub)| sub.join(nombre).is_file())
+    };
+
+    if types.iter().any(|t| t == "Node.js") {
+        if en_alguna_parte("node_modules") {
+            encontrado.get_or_insert_with(|| "node_modules".to_string());
+        } else {
+            instalado = false;
+            faltan.push("node_modules".to_string());
+        }
+    }
+
+    if types.iter().any(|t| t == "Python") {
+        match ENTORNOS_PYTHON.iter().find(|nombre| en_alguna_parte(nombre)) {
+            Some(nombre) => {
+                encontrado.get_or_insert_with(|| (*nombre).to_string());
+            }
+            None if find_python_executable(path) != "python3" => {
+                encontrado.get_or_insert_with(|| "entorno virtual".to_string());
+            }
+            None => {
+                instalado = false;
+                faltan.push(".venv".to_string());
+            }
+        }
+    }
+
+    if types.iter().any(|t| t == "PHP") {
+        if en_alguna_parte("vendor") {
+            encontrado.get_or_insert_with(|| "vendor".to_string());
+        } else {
+            instalado = false;
+            faltan.push("vendor".to_string());
+        }
+    }
+
+    if types.iter().any(|t| t == "Rust") {
+        // Cargo guarda las dependencias en su caché global, no en el proyecto:
+        // con el lockfile ya está resuelto, y `target` solo aparece al compilar.
+        //
+        // Se busca también en los subproyectos: en una app de Tauri el manifiesto
+        // de Rust vive en `src-tauri/`, y mirar solo la raíz daba un «Falta
+        // Cargo.lock» en un proyecto que lo tiene.
+        if en_alguna_parte("target") {
+            encontrado.get_or_insert_with(|| "target".to_string());
+        } else if !archivo_en_alguna_parte("Cargo.lock") {
+            instalado = false;
+            faltan.push("Cargo.lock".to_string());
+        }
+    }
+
+    EntornoDependencias { instalado, encontrado, faltan }
 }
 
 /// Punto de entrada de un proyecto Python sin framework, por convencion.
@@ -1486,6 +1508,50 @@ mod tests {
         assert_eq!(adapted.args, vec!["run", "dev", "--port", "8001"]);
         assert_eq!(adapted.env.get("PORT").map(String::as_str), Some("8001"));
         assert!(adapted.display.contains("8001"));
+    }
+
+    /// En una app de Tauri el manifiesto de Rust vive en `src-tauri/`. Mirar solo
+    /// la raíz daba «Falta Cargo.lock» en un proyecto que lo tiene.
+    #[test]
+    fn finds_the_rust_environment_inside_a_subproject() {
+        let directory = tempdir().expect("tempdir");
+        fs::write(directory.path().join("package.json"), r#"{"dependencies":{"react":"19"}}"#).expect("package");
+        fs::create_dir_all(directory.path().join("node_modules")).expect("node_modules");
+        let rust = directory.path().join("src-tauri");
+        fs::create_dir_all(&rust).expect("src-tauri");
+        fs::write(rust.join("Cargo.toml"), "[package]\nname = \"app\"\n").expect("cargo");
+        fs::write(rust.join("Cargo.lock"), "version = 3\n").expect("lock");
+
+        let scan = scan_project(directory.path()).expect("scan");
+        assert!(scan.installed_dependencies, "faltan: {:?}", scan.missing_environment);
+        assert!(scan.missing_environment.is_empty(), "{:?}", scan.missing_environment);
+    }
+
+    /// El detector dice DÓNDE están y QUÉ falta, no solo un sí/no: la interfaz
+    /// enseñaba «node_modules o .venv» hasta en proyectos de otras pilas.
+    #[test]
+    fn reports_which_environment_was_found_or_missing() {
+        // Sin dependencias declaradas no hay entorno que buscar.
+        let vacio = tempdir().expect("tempdir");
+        fs::write(vacio.path().join("package.json"), "{}").expect("package");
+        let scan = scan_project(vacio.path()).expect("scan");
+        assert_eq!(scan.declared_dependencies, 0);
+        assert!(scan.installed_dependencies);
+        assert_eq!(scan.environment_dir, None);
+        assert!(scan.missing_environment.is_empty());
+
+        // Declaradas y sin instalar: se nombra el directorio de ESTA pila.
+        let python = tempdir().expect("tempdir");
+        fs::write(python.path().join("requirements.txt"), "requests==2.32.0\n").expect("requirements");
+        let scan = scan_project(python.path()).expect("scan");
+        assert!(!scan.installed_dependencies);
+        assert_eq!(scan.missing_environment, vec![".venv".to_string()]);
+
+        // Instaladas: se dice en cuál.
+        fs::create_dir_all(python.path().join(".venv312")).expect("venv");
+        let scan = scan_project(python.path()).expect("scan");
+        assert!(scan.installed_dependencies);
+        assert_eq!(scan.environment_dir.as_deref(), Some(".venv312"));
     }
 
     /// «Instalar dependencias» en un proyecto Python sin entorno virtual debe
