@@ -59,7 +59,7 @@ export function CloneModal({
             <strong className="clone-repo-name">{repo.fullName}</strong>
             <span className="clone-repo-meta">
               {repo.language ? <span>{repo.language} · </span> : null}
-              <span>{repo.isPrivate ? 'Privado 🔒' : 'Público 🌐'}</span>
+              <span>{repo.isPrivate ? 'Privado' : 'Público'}</span>
               <span> · {repo.stars} ★</span>
             </span>
           </div>
