@@ -239,19 +239,6 @@ export function ProjectWorkspace({
                 </button>
               )}
             </>
-          ) : isMissingDeps ? (
-            /* Sin dependencias instaladas, ejecutar no puede funcionar. En vez
-               de un botón apagado con un consejo en el tooltip, se ofrece el
-               paso que toca: en Python esto además crea el entorno virtual. */
-            <button
-              className="primary"
-              disabled={!!busy}
-              onClick={() => void onRun('install')}
-              title="Instala lo declarado en el manifiesto del proyecto"
-            >
-              {busy === 'run:install' ? <LoaderCircle size={16} className="spin" /> : <PackageOpen size={16} />}
-              Instalar dependencias
-            </button>
           ) : primaryAction ? (
             <button
               className="primary"

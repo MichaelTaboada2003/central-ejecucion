@@ -66,21 +66,6 @@ describe('ProjectWorkspace: la acción principal depende de la naturaleza', () =
     expect(screen.queryByRole('button', { name: /^run$/i })).toBeNull()
   })
 
-  it('un script sí ofrece instalar sus dependencias: eso sí lo gestiona el panel', () => {
-    montar({
-      project: proyecto({ kind: 'script', port: null, localUrl: null, devCommand: 'python main.py' }),
-      scan: {
-        kind: 'script',
-        devCommand: 'python main.py',
-        installedDependencies: false,
-        declaredDependencies: 40,
-        packageManager: 'pip',
-        scripts: [{ name: 'main.py', command: 'python main.py', source: 'main.py' }],
-      } as ProjectDetail['scan'],
-    })
-    expect(screen.getByRole('button', { name: /instalar dependencias/i })).toBeTruthy()
-  })
-
   it('un script no muestra las pestañas de ejecución', () => {
     montar({
       project: proyecto({ kind: 'script', port: null, localUrl: null }),
@@ -112,44 +97,6 @@ describe('ProjectWorkspace: la acción principal depende de la naturaleza', () =
       scan: { kind: 'inert', devCommand: null, port: null, scripts: [] } as unknown as ProjectDetail['scan'],
     })
     expect(screen.queryByRole('button', { name: /^run$/i })).toBeNull()
-  })
-})
-
-describe('ProjectWorkspace: sin dependencias, el siguiente paso es instalarlas', () => {
-  it('ofrece instalar en vez de un botón apagado con un consejo escondido', async () => {
-    const usuario = userEvent.setup()
-    montar({
-      project: proyecto({ kind: 'script', port: null, localUrl: null, devCommand: 'python main.py' }),
-      scan: {
-        kind: 'script',
-        devCommand: 'python main.py',
-        port: null,
-        installedDependencies: false,
-        declaredDependencies: 40,
-        packageManager: 'pip',
-        scripts: [{ name: 'main.py', command: 'python main.py', source: 'main.py' }],
-      } as ProjectDetail['scan'],
-    })
-
-    const boton = screen.getByRole('button', { name: /instalar dependencias/i })
-    expect(boton).toHaveProperty('disabled', false)
-    await usuario.click(boton)
-    expect(onRun).toHaveBeenCalledWith('install')
-  })
-
-  it('con el entorno listo no queda ningún botón de arranque en un script', () => {
-    montar({
-      project: proyecto({ kind: 'script', port: null, localUrl: null, devCommand: 'python main.py' }),
-      scan: {
-        kind: 'script',
-        devCommand: 'python main.py',
-        installedDependencies: true,
-        declaredDependencies: 40,
-        scripts: [{ name: 'main.py', command: 'python main.py', source: 'main.py' }],
-      } as ProjectDetail['scan'],
-    })
-    expect(screen.queryByRole('button', { name: /ejecutar/i })).toBeNull()
-    expect(screen.queryByRole('button', { name: /instalar dependencias/i })).toBeNull()
   })
 })
 
