@@ -51,78 +51,71 @@ export function CloneModal({
   return (
     <Modal title="Clonar Repositorio de GitHub" onClose={onClose}>
       <form onSubmit={handleSubmit} className="form-stack">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12, background: 'var(--bg-surface-2)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
-          <div className="mini-icon" style={{ width: 36, height: 36, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-surface-3)' }}>
+        <div className="clone-repo-header">
+          <div className="clone-repo-icon">
             <GitHubLogo size={20} color="var(--accent-cyan)" />
           </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <strong style={{ fontSize: 14, display: 'block' }}>{repo.fullName}</strong>
-            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-              {repo.language ? `${repo.language} · ` : ''}{repo.isPrivate ? 'Privado 🔒' : 'Público 🌐'} · {repo.stars} ★
+          <div className="clone-repo-details">
+            <strong className="clone-repo-name">{repo.fullName}</strong>
+            <span className="clone-repo-meta">
+              {repo.language ? <span>{repo.language} · </span> : null}
+              <span>{repo.isPrivate ? 'Privado 🔒' : 'Público 🌐'}</span>
+              <span> · {repo.stars} ★</span>
             </span>
           </div>
         </div>
 
-        <div className="clone-destination-selector" style={{ marginTop: 8 }}>
-          <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8, display: 'block' }}>
+        <div className="clone-destination-section">
+          <span className="clone-section-label">
             SELECCIONA DÓNDE GUARDAR EL PROYECTO
-          </label>
+          </span>
 
           {/* Option 1: Default Folder */}
           <div
             className={`clone-choice-card ${destinationMode === 'default' ? 'active' : ''}`}
             onClick={() => setDestinationMode('default')}
-            style={{
-              padding: 12,
-              borderRadius: 'var(--radius-sm)',
-              border: destinationMode === 'default' ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
-              background: destinationMode === 'default' ? 'rgba(59, 130, 246, 0.08)' : 'var(--bg-surface-1)',
-              cursor: 'pointer',
-              marginBottom: 8,
-              transition: 'all 0.15s ease',
-            }}
+            role="button"
+            tabIndex={0}
+            onKeyDown={e => { if (e.key === ' ' || e.key === 'Enter') setDestinationMode('default') }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <input
-                type="radio"
-                name="destinationMode"
-                checked={destinationMode === 'default'}
-                onChange={() => setDestinationMode('default')}
-              />
-              <strong style={{ fontSize: 13 }}>Ruta predeterminada</strong>
-              <span className="badge-pill" style={{ fontSize: 10, marginLeft: 'auto', background: 'var(--bg-surface-3)', padding: '2px 6px', borderRadius: 4 }}>
-                Ajustes
-              </span>
+            <div className="clone-card-header">
+              <label className="clone-radio-label" onClick={e => e.stopPropagation()}>
+                <input
+                  type="radio"
+                  name="destinationMode"
+                  checked={destinationMode === 'default'}
+                  onChange={() => setDestinationMode('default')}
+                />
+                <strong className="clone-card-title">Ruta predeterminada</strong>
+              </label>
+              <span className="clone-badge">Ajustes</span>
             </div>
-            <p style={{ margin: '6px 0 0 24px', fontSize: 12, color: 'var(--text-secondary)', wordBreak: 'break-all', fontFamily: 'var(--font-mono)' }}>
-              {defaultTarget}
-            </p>
+            <div className="clone-path-box">
+              <code>{defaultTarget}</code>
+            </div>
           </div>
 
           {/* Option 2: Custom Folder */}
           <div
             className={`clone-choice-card ${destinationMode === 'custom' ? 'active' : ''}`}
             onClick={() => setDestinationMode('custom')}
-            style={{
-              padding: 12,
-              borderRadius: 'var(--radius-sm)',
-              border: destinationMode === 'custom' ? '1px solid var(--accent-primary)' : '1px solid var(--border-subtle)',
-              background: destinationMode === 'custom' ? 'rgba(59, 130, 246, 0.08)' : 'var(--bg-surface-1)',
-              cursor: 'pointer',
-              transition: 'all 0.15s ease',
-            }}
+            role="button"
+            tabIndex={0}
+            onKeyDown={e => { if (e.key === ' ' || e.key === 'Enter') setDestinationMode('custom') }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <input
-                type="radio"
-                name="destinationMode"
-                checked={destinationMode === 'custom'}
-                onChange={() => setDestinationMode('custom')}
-              />
-              <strong style={{ fontSize: 13 }}>Ruta personalizada</strong>
+            <div className="clone-card-header">
+              <label className="clone-radio-label" onClick={e => e.stopPropagation()}>
+                <input
+                  type="radio"
+                  name="destinationMode"
+                  checked={destinationMode === 'custom'}
+                  onChange={() => setDestinationMode('custom')}
+                />
+                <strong className="clone-card-title">Ruta personalizada</strong>
+              </label>
             </div>
 
-            <div style={{ display: 'flex', gap: 8, marginLeft: 24 }} onClick={e => e.stopPropagation()}>
+            <div className="clone-custom-input-row" onClick={e => e.stopPropagation()}>
               <input
                 type="text"
                 value={customPath}
@@ -131,27 +124,31 @@ export function CloneModal({
                   setDestinationMode('custom')
                 }}
                 placeholder="/ruta/personalizada/proyecto"
-                style={{ flex: 1, fontSize: 12, fontFamily: 'var(--font-mono)' }}
+                className="clone-input-field"
               />
-              <button type="button" className="secondary" onClick={handleBrowseCustom} style={{ height: 34, fontSize: 12, padding: '0 12px' }}>
+              <button
+                type="button"
+                className="secondary clone-browse-btn"
+                onClick={handleBrowseCustom}
+              >
                 <FolderOpen size={14} /> Explorar
               </button>
             </div>
 
             {destinationMode === 'custom' && (
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, marginLeft: 24, fontSize: 11, color: 'var(--text-secondary)', cursor: 'pointer' }} onClick={e => e.stopPropagation()}>
+              <label className="clone-checkbox-label" onClick={e => e.stopPropagation()}>
                 <input
                   type="checkbox"
                   checked={setAsDefault}
                   onChange={e => setSetAsDefault(e.target.checked)}
                 />
-                Guardar y establecer esta carpeta como mi nueva ruta predeterminada
+                <span>Guardar y establecer esta carpeta como mi nueva ruta predeterminada</span>
               </label>
             )}
           </div>
         </div>
 
-        <div className="form-actions" style={{ marginTop: 16 }}>
+        <div className="modal-actions" style={{ marginTop: 12 }}>
           <button type="button" className="secondary" onClick={onClose} disabled={busy}>
             Cancelar
           </button>
