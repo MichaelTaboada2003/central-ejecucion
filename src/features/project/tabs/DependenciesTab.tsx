@@ -1,5 +1,6 @@
-import { AlertTriangle, Box, Check, Copy, LoaderCircle, PackageOpen, Search } from 'lucide-react'
+import { AlertTriangle, Box, Check, Copy, LoaderCircle, PackageOpen, Search, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { normalizeSearchText } from '../../../lib/projects'
 import type { ProjectDetail } from '../../../types'
 import { Meta } from '../../../components/Primitives'
 
@@ -19,12 +20,13 @@ export function DependenciesTab({
   const dependencies = scan.dependencies || []
 
   const filteredDeps = useMemo(() => {
+    const normalized = normalizeSearchText(search.trim())
+    const tokens = normalized ? normalized.split(/\s+/).filter(Boolean) : []
     return dependencies.filter(dep => {
-      const matchesSearch =
-        dep.name.toLowerCase().includes(search.toLowerCase()) ||
-        dep.source.toLowerCase().includes(search.toLowerCase()) ||
-        (dep.version && dep.version.toLowerCase().includes(search.toLowerCase()))
-      if (!matchesSearch) return false
+      if (tokens.length > 0) {
+        const haystack = normalizeSearchText(`${dep.name || ''} ${dep.source || ''} ${dep.version || ''}`)
+        if (!tokens.every(token => haystack.includes(token))) return false
+      }
       if (filterType === 'prod') return !dep.isDev
       if (filterType === 'dev') return dep.isDev
       return true
@@ -133,7 +135,21 @@ export function DependenciesTab({
               className="deps-search-input"
               value={search}
               onChange={e => setSearch(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Escape') setSearch('')
+              }}
             />
+            {search && (
+              <button
+                type="button"
+                className="search-clear-btn"
+                onClick={() => setSearch('')}
+                title="Limpiar búsqueda (Esc)"
+                aria-label="Limpiar búsqueda"
+              >
+                <X size={14} />
+              </button>
+            )}
           </div>
 
           <div className="deps-filter-chips">

@@ -28,13 +28,42 @@ export function projectKind(project: Project): ProjectKind {
   return project.kind ?? 'service'
 }
 
-/** Busca en nombre, ruta, tipo, frameworks y etiquetas. */
+export function normalizeSearchText(text: string): string {
+  return text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+}
+
+/**
+ * Busca en nombre, ruta, tipo, frameworks, etiquetas, puertos, comandos y gestores.
+ * Soporta múltiples palabras (tokens) y es insensible a mayúsculas y acentos/tildes.
+ */
 export function searchProjects(projects: Project[], query: string): Project[] {
-  const needle = query.trim().toLowerCase()
-  if (!needle) return projects
+  const normalizedQuery = normalizeSearchText(query.trim())
+  if (!normalizedQuery) return projects
+
+  const tokens = normalizedQuery.split(/\s+/).filter(Boolean)
+  if (tokens.length === 0) return projects
+
   return projects.filter(project => {
-    const haystack = `${project.name} ${project.path} ${project.projectType} ${project.frameworks.join(' ')} ${project.tags.join(' ')}`.toLowerCase()
-    return haystack.includes(needle)
+    const haystack = normalizeSearchText(
+      [
+        project.name || '',
+        project.path || '',
+        project.canonicalPath || '',
+        project.projectType || '',
+        ...(project.frameworks || []),
+        ...(project.tags || []),
+        project.packageManager || '',
+        project.devCommand || '',
+        project.buildCommand || '',
+        project.port ? String(project.port) : '',
+        project.kind || '',
+        project.status || '',
+      ].join(' ')
+    )
+    return tokens.every(token => haystack.includes(token))
   })
 }
 

@@ -98,12 +98,10 @@ export function useProjects({ notify, onSelect, query, statusFilter }: Options) 
     return refreshed.length
   }, [])
 
-  const groups = useMemo(() => groupProjects(projects), [projects])
-
-  // Los contadores se calculan sobre el resultado de la búsqueda pero ANTES de
-  // aplicar el filtro de estado: si no, al elegir «En ejecución» el contador de
-  // «Todos» pasaba a mostrar solo los proyectos en ejecución.
+  // Los contadores y los grupos de la barra lateral se calculan sobre el
+  // resultado de la búsqueda para reflejar los proyectos encontrados.
   const searchedProjects = useMemo(() => searchProjects(projects, query), [projects, query])
+  const groups = useMemo(() => groupProjects(searchedProjects), [searchedProjects])
   const visibleProjects = useMemo(() => filterByStatus(searchedProjects, statusFilter), [searchedProjects, statusFilter])
   const stats = useMemo(() => countProjects(searchedProjects), [searchedProjects])
 

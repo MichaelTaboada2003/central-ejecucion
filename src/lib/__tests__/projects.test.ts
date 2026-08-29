@@ -57,6 +57,24 @@ describe('searchProjects', () => {
   it('ignora mayúsculas y busca en la ruta', () => {
     expect(searchProjects(lista, '/PROYECTOS/API').map(p => p.id)).toEqual(['api'])
   })
+
+  it('soporta múltiples palabras / tokens en cualquier orden', () => {
+    expect(searchProjects(lista, 'web astro').map(p => p.id)).toEqual(['web'])
+    expect(searchProjects(lista, 'github astro').map(p => p.id)).toEqual(['web'])
+  })
+
+  it('es insensible a tildes y diacríticos', () => {
+    const conTildes: Project[] = [
+      proyecto({ id: 'app1', name: 'Gestión de Clientes', port: 3000, packageManager: 'pnpm' }),
+      proyecto({ id: 'app2', name: 'modulo de ventas', port: 8080, devCommand: 'npm run dev' }),
+    ]
+    expect(searchProjects(conTildes, 'gestion').map(p => p.id)).toEqual(['app1'])
+    expect(searchProjects(conTildes, 'GESTIÓN').map(p => p.id)).toEqual(['app1'])
+    expect(searchProjects(conTildes, 'módulo').map(p => p.id)).toEqual(['app2'])
+    expect(searchProjects(conTildes, '3000').map(p => p.id)).toEqual(['app1'])
+    expect(searchProjects(conTildes, 'pnpm').map(p => p.id)).toEqual(['app1'])
+    expect(searchProjects(conTildes, 'npm run dev').map(p => p.id)).toEqual(['app2'])
+  })
 })
 
 describe('filterByStatus', () => {

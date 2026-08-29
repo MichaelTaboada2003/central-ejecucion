@@ -1,7 +1,8 @@
-import { ArrowUpRight, Check, Cloud, CloudOff, DownloadCloud, FolderOpen, GitFork, Globe, LayoutGrid, List, LoaderCircle, Lock, RefreshCw, Search, Settings2, Star } from 'lucide-react'
+import { ArrowUpRight, Check, Cloud, CloudOff, DownloadCloud, FolderOpen, GitFork, Globe, LayoutGrid, List, LoaderCircle, Lock, RefreshCw, Search, Settings2, Star, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { api } from '../../api'
 import { formatRelative, getStackClass } from '../../lib/format'
+import { normalizeSearchText } from '../../lib/projects'
 import type { GitHubAccountStatus, GitHubRepo } from '../../types'
 import { GitHubLogo } from '../../components/GitHubLogo'
 import { StatCard } from '../../components/Primitives'
@@ -43,11 +44,13 @@ export function GitHubHubView({
   }, [repos, ownerPrefix])
 
   const filteredRepos = useMemo(() => {
+    const normalizedQuery = normalizeSearchText(query.trim())
+    const tokens = normalizedQuery ? normalizedQuery.split(/\s+/).filter(Boolean) : []
     return repos.filter(r => {
-      const matchQuery = `${r.name} ${r.fullName} ${r.language || ''} ${r.description || ''}`
-        .toLowerCase()
-        .includes(query.toLowerCase())
-      if (!matchQuery) return false
+      if (tokens.length > 0) {
+        const matchQuery = normalizeSearchText(`${r.name} ${r.fullName} ${r.language || ''} ${r.description || ''}`)
+        if (!tokens.every(token => matchQuery.includes(token))) return false
+      }
 
       if (filter === 'owner') return ownerPrefix ? r.fullName.toLowerCase().startsWith(ownerPrefix) : true
       if (filter === 'cloud') return !r.isCloned
@@ -121,9 +124,23 @@ export function GitHubHubView({
               <input
                 value={query}
                 onChange={e => setQuery(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Escape') setQuery('')
+                }}
                 placeholder="Buscar repositorios…"
                 aria-label="Buscar repositorios"
               />
+              {query && (
+                <button
+                  type="button"
+                  className="search-clear-btn"
+                  onClick={() => setQuery('')}
+                  title="Limpiar búsqueda (Esc)"
+                  aria-label="Limpiar búsqueda"
+                >
+                  <X size={14} />
+                </button>
+              )}
             </div>
             <div className="filter-group">
               {(['all', 'owner', 'cloud', 'local', 'public', 'private'] as const).map(f => {

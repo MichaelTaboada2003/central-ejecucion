@@ -95,6 +95,7 @@ export default function App() {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
         event.preventDefault()
         searchRef.current?.focus()
+        searchRef.current?.select()
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'n') {
         event.preventDefault()
@@ -104,6 +105,21 @@ export default function App() {
     window.addEventListener('keydown', onKeydown)
     return () => window.removeEventListener('keydown', onKeydown)
   }, [])
+
+  const handleSearchChange = (value: string) => {
+    setFilter(value)
+    if (value.trim()) {
+      if (selectedId) setSelectedId(null)
+      if (viewMode !== 'local') setViewMode('local')
+    }
+  }
+
+  const handleSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Escape') {
+      setFilter('')
+      searchRef.current?.blur()
+    }
+  }
 
   // La lista es la única fuente de verdad de las banderas de un proyecto: el
   // detalle las leía por su cuenta y había que mantener las dos copias de
@@ -605,7 +621,8 @@ export default function App() {
               <input
                 ref={searchRef}
                 value={filter}
-                onChange={event => setFilter(event.target.value)}
+                onChange={event => handleSearchChange(event.target.value)}
+                onKeyDown={handleSearchKeyDown}
                 placeholder="Buscar proyectos, stacks o etiquetas…"
                 aria-label="Buscar proyectos"
               />
@@ -617,7 +634,7 @@ export default function App() {
                     setFilter('')
                     searchRef.current?.focus()
                   }}
-                  title="Limpiar búsqueda"
+                  title="Limpiar búsqueda (Esc)"
                   aria-label="Limpiar búsqueda"
                 >
                   <X size={14} />
@@ -797,11 +814,24 @@ export default function App() {
 
       {modal === 'palette' && (
         <Palette
+          projects={projects}
           onClose={() => setModal(null)}
           onRegister={() => setModal('register')}
           onSettings={() => void refreshSettings()}
           onDashboard={() => {
             setSelectedId(null)
+            setViewMode('local')
+            setModal(null)
+          }}
+          onGitHub={() => {
+            setSelectedId(null)
+            setViewMode('github')
+            setModal(null)
+          }}
+          onRefreshAll={() => void handleRefreshAll()}
+          onSelectProject={id => {
+            setSelectedId(id)
+            setViewMode('local')
             setModal(null)
           }}
         />
