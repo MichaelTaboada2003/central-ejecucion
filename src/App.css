@@ -2773,23 +2773,32 @@ code, kbd, pre, .mono {
 .repo-nombre {
   margin: 0;
   min-width: 0;
+  max-width: 100%;
   font: 600 14px/1.3 var(--font-mono);
   letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .repo-enlace {
-  display: inline;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  min-width: 0;
   padding: 0;
   color: var(--text-primary);
   font: inherit;
   text-align: left;
-  word-break: break-word;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .repo-enlace svg {
-  display: inline;
-  margin-left: 3px;
-  vertical-align: -1px;
+  flex-shrink: 0;
+  display: inline-block;
   color: var(--text-muted);
   transition: color var(--transition-fast);
 }
@@ -3031,6 +3040,30 @@ button.github-link-pill {
 .github-table-row.is-cloned {
   border-left: 3px solid var(--accent-primary);
   background: linear-gradient(90deg, rgba(16, 185, 129, 0.02) 0%, transparent 100%);
+}
+
+.github-title-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  min-width: 0;
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.project-cell .github-title-link strong {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.github-title-link svg {
+  flex-shrink: 0;
+  display: inline-block;
 }
 
 .view-mode-toggles {

@@ -205,14 +205,12 @@ export function GitHubHubView({
                         <GitHubLogo size={18} color={repo.isCloned ? 'var(--accent-primary)' : 'var(--accent-cyan)'} />
                       </span>
                       <span className="project-info">
-                        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <span
-                            className="github-title-link"
-                            title={`Abrir ${repo.fullName} en GitHub`}
-                          >
-                            <strong>{repo.name}</strong>
-                            <ArrowUpRight size={13} style={{ opacity: 0.6 }} />
-                          </span>
+                        <span
+                          className="github-title-link"
+                          title={`Abrir ${repo.fullName} en GitHub`}
+                        >
+                          <strong>{repo.name}</strong>
+                          <ArrowUpRight size={13} style={{ opacity: 0.6 }} />
                         </span>
                         <small title={repo.description || repo.fullName}>
                           {repo.fullName} {repo.description ? `· ${repo.description}` : ''}
