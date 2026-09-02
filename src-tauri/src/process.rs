@@ -197,7 +197,18 @@ fn emit_reader<R: Read + Send + 'static>(app: AppHandle, project_id: String, str
 
 pub fn enhanced_path() -> String {
     let home = std::env::var("HOME").unwrap_or_default();
-    let common_paths = [
+    let mut paths = Vec::new();
+    // macOS GUI apps inherit path_helper PATH, which lists /usr/local/bin
+    // (pkg Node) before nvm. Prepend the nvm default so `pnpm` and `node`
+    // resolve to the same toolchain (`nvm alias default`). Scanning every
+    // installed version would pick Node 18 vs 24 based on readdir order.
+    if let Some(nvm_bin) = nvm_default_bin(&home) {
+        paths.push(nvm_bin);
+    }
+    let extras = [
+        format!("{home}/.volta/bin"),
+        format!("{home}/.asdf/shims"),
+        format!("{home}/.local/share/mise/shims"),
         format!("{home}/.cargo/bin"),
         format!("{home}/.local/bin"),
         "/opt/homebrew/bin".into(),
@@ -209,15 +220,46 @@ pub fn enhanced_path() -> String {
         "/usr/sbin".into(),
         "/sbin".into(),
     ];
-    let mut current_paths = std::env::var("PATH")
-        .map(|p| std::env::split_paths(&p).map(|d| d.to_string_lossy().to_string()).collect::<Vec<_>>())
-        .unwrap_or_default();
-    for cp in common_paths {
-        if !current_paths.contains(&cp) && Path::new(&cp).is_dir() {
-            current_paths.push(cp);
+    for extra in extras {
+        if !paths.contains(&extra) && Path::new(&extra).is_dir() {
+            paths.push(extra);
         }
     }
-    current_paths.join(":")
+    if let Ok(inherited) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&inherited) {
+            let dir = dir.to_string_lossy().to_string();
+            if !paths.contains(&dir) {
+                paths.push(dir);
+            }
+        }
+    }
+    paths.join(":")
+}
+
+fn nvm_default_bin(home: &str) -> Option<String> {
+    let alias = std::fs::read_to_string(Path::new(home).join(".nvm/alias/default")).ok()?;
+    let wanted = alias.trim().trim_start_matches('v');
+    if wanted.is_empty() {
+        return None;
+    }
+    let versions = Path::new(home).join(".nvm/versions/node");
+    let mut matches: Vec<(Vec<u32>, String)> = Vec::new();
+    for entry in std::fs::read_dir(&versions).ok()? {
+        let Ok(entry) = entry else { continue };
+        let name = entry.file_name();
+        let ver = name.to_string_lossy();
+        let ver = ver.trim_start_matches('v');
+        if ver != wanted && !ver.starts_with(&format!("{wanted}.")) {
+            continue;
+        }
+        let bin = entry.path().join("bin");
+        if bin.is_dir() {
+            let key = ver.split('.').filter_map(|part| part.parse().ok()).collect();
+            matches.push((key, bin.to_string_lossy().into_owned()));
+        }
+    }
+    matches.sort_by(|a, b| a.0.cmp(&b.0));
+    matches.pop().map(|(_, path)| path)
 }
 
 /// Envía una señal a todo el grupo del proceso administrado. Solo alcanza a los
@@ -327,5 +369,17 @@ mod tests {
 
         // El nieto recibió la señal a través del grupo, no solo el hijo directo.
         assert!(!is_alive(grandchild), "el nieto siguió vivo tras detener el proyecto");
+    }
+
+    #[test]
+    fn nvm_default_bin_uses_alias_not_the_oldest_installed_version() {
+        let dir = tempfile::tempdir().expect("temp home");
+        let home = dir.path();
+        std::fs::create_dir_all(home.join(".nvm/alias")).unwrap();
+        std::fs::create_dir_all(home.join(".nvm/versions/node/v18.20.8/bin")).unwrap();
+        std::fs::create_dir_all(home.join(".nvm/versions/node/v24.8.0/bin")).unwrap();
+        std::fs::write(home.join(".nvm/alias/default"), "24\n").unwrap();
+        let got = nvm_default_bin(&home.to_string_lossy()).expect("default bin");
+        assert!(got.ends_with("v24.8.0/bin"), "got {got}");
     }
 }

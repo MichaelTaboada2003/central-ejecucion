@@ -10,6 +10,7 @@ use crate::domain::{
     ProjectDetail, ProjectStatus, ProjectScan,
 };
 use crate::ide;
+use crate::process::enhanced_path;
 use crate::scanner::{self, canonical_project_path, command_for_action, scan_project};
 use crate::storage::Storage;
 use chrono::Utc;
@@ -725,31 +726,6 @@ fn trusted_project_root(project: &Project) -> Result<PathBuf, String> {
     if canonical != root { return Err("Operación bloqueada: la ruta canónica del proyecto cambió. Vuelve a registrar la carpeta para continuar.".into()); }
     if !canonical.is_dir() { return Err("Operación bloqueada: la ruta registrada no es una carpeta.".into()); }
     Ok(canonical)
-}
-
-pub fn enhanced_path() -> String {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let common_paths = [
-        format!("{home}/.cargo/bin"),
-        format!("{home}/.local/bin"),
-        "/opt/homebrew/bin".into(),
-        "/opt/homebrew/sbin".into(),
-        "/usr/local/bin".into(),
-        "/usr/local/sbin".into(),
-        "/usr/bin".into(),
-        "/bin".into(),
-        "/usr/sbin".into(),
-        "/sbin".into(),
-    ];
-    let mut current_paths = std::env::var("PATH")
-        .map(|p| std::env::split_paths(&p).map(|d| d.to_string_lossy().to_string()).collect::<Vec<_>>())
-        .unwrap_or_default();
-    for cp in common_paths {
-        if !current_paths.contains(&cp) && Path::new(&cp).is_dir() {
-            current_paths.push(cp);
-        }
-    }
-    current_paths.join(":")
 }
 
 fn command_available(program: &str, cwd: &Path) -> bool {
