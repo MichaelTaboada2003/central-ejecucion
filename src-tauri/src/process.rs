@@ -197,7 +197,7 @@ fn emit_reader<R: Read + Send + 'static>(app: AppHandle, project_id: String, str
 
 pub fn enhanced_path() -> String {
     let home = std::env::var("HOME").unwrap_or_default();
-    let common_paths = [
+    let mut common_paths = vec![
         format!("{home}/.cargo/bin"),
         format!("{home}/.local/bin"),
         "/opt/homebrew/bin".into(),
@@ -209,6 +209,18 @@ pub fn enhanced_path() -> String {
         "/usr/sbin".into(),
         "/sbin".into(),
     ];
+    // nvm/fnm/volta instalan binarios de cada versión de node en una subcarpeta
+    // versionada. Sin esto, un pnpm gestionado por nvm es invisible para los
+    // subprocesos que lanza la app desde Finder (que hereda un PATH mínimo).
+    for root in [format!("{home}/.nvm/versions/node"), format!("{home}/.fnm/node-versions"), format!("{home}/.volta/tools/image/node")] {
+        if let Ok(entries) = std::fs::read_dir(&root) {
+            for entry in entries.flatten() {
+                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    common_paths.push(format!("{}/bin", entry.path().display()));
+                }
+            }
+        }
+    }
     let mut current_paths = std::env::var("PATH")
         .map(|p| std::env::split_paths(&p).map(|d| d.to_string_lossy().to_string()).collect::<Vec<_>>())
         .unwrap_or_default();
