@@ -145,6 +145,11 @@ pub fn refresh_all_projects(state: tauri::State<'_, AppState>) -> Result<Vec<Pro
 pub fn delete_project(request: DeleteProjectRequest, app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
     let project = state.with_storage(|db| db.get_project(&request.project_id))?;
     let _ = state.processes.stop(&app, &state.storage, &request.project_id);
+    // Antes de tocar nada: las variables de entorno de la bóveda pasan a
+    // huérfanas con el nombre y la ruta de este proyecto grabados. Se hace aquí
+    // y no en `Storage::delete_project` porque quien borra necesita saber de
+    // quién eran, y la clave ajena ya se habrá puesto a NULL después.
+    let _ = state.with_storage(|db| db.stamp_env_var_origin(&request.project_id));
     if request.delete_files {
         let path = Path::new(&project.canonical_path);
         if path.exists() {
@@ -157,6 +162,7 @@ pub fn delete_project(request: DeleteProjectRequest, app: tauri::AppHandle, stat
 
 #[tauri::command(async)]
 pub fn unregister_project(project_id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let _ = state.with_storage(|db| db.stamp_env_var_origin(&project_id));
     state.with_storage(|db| db.delete_project(&project_id))?;
     Ok(())
 }

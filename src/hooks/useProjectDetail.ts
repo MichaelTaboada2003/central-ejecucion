@@ -5,7 +5,7 @@ import { appendTerminalEntries, toTerminalEntries, type TerminalEntry } from '..
 import type { CleanupPreview, DiskReport, LogEntry, ProjectDetail } from '../types'
 import type { NoticeKind } from './useNotices'
 
-export type Tab = 'summary' | 'git' | 'processes' | 'dependencies' | 'disk' | 'scripts' | 'configuration'
+export type Tab = 'summary' | 'git' | 'processes' | 'dependencies' | 'disk' | 'scripts' | 'environment' | 'configuration'
 
 interface Options {
   selectedId: string | null

@@ -7,6 +7,7 @@ import {
   Command,
   Database,
   HardDrive,
+  KeyRound,
   LayoutDashboard,
   Pin,
   Plus,
@@ -19,6 +20,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
 
 import { type StatusFilter } from './lib/projects'
+import { useEnvVault } from './hooks/useEnvVault'
 import { useGitHub } from './hooks/useGitHub'
 import { reportError, useNotices } from './hooks/useNotices'
 import { useProjectDetail } from './hooks/useProjectDetail'
@@ -29,6 +31,7 @@ import { Modal } from './components/Modal'
 import { LoadingScreen } from './components/Primitives'
 import { StatusDot } from './components/Status'
 import { Dashboard } from './features/dashboard/Dashboard'
+import { EnvVaultView } from './features/env/EnvVaultView'
 import { GitHubHubView } from './features/github/GitHubHubView'
 import { CleanupModal } from './features/modals/CleanupModal'
 import { CloneModal } from './features/modals/CloneModal'
@@ -57,7 +60,7 @@ export default function App() {
   const [modal, setModal] = useState<Modal>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [ideSettings, setIdeSettings] = useState<IdeSettings | null>(null)
-  const [viewMode, setViewMode] = useState<'local' | 'github'>('local')
+  const [viewMode, setViewMode] = useState<'local' | 'github' | 'vault'>('local')
   const [offloadCandidate, setOffloadCandidate] = useState<Project | null>(null)
   const [cloneCandidate, setCloneCandidate] = useState<GitHubRepo | null>(null)
   const [deleteCandidate, setDeleteCandidate] = useState<Project | null>(null)
@@ -80,6 +83,7 @@ export default function App() {
 
   useProjectSync({ loadProjects, loadDetail, selectedIdRef })
   const github = useGitHub()
+  const vault = useEnvVault(notify)
 
   useEffect(() => {
     void loadProjects(false)
@@ -312,12 +316,19 @@ export default function App() {
       }
       await loadProjects(true)
       await github.load()
+      // Las variables del proyecto acaban de quedarse huérfanas: sin recontar,
+      // la bóveda no aparecería en la barra lateral hasta reiniciar la app.
+      await vault.loadCount()
       notify(result.message)
     })
   }
 
   const handleDeleteProject = (candidate: Project) => {
     return action(`delete:${candidate.id}`, async () => {
+      // Se cuenta ANTES de borrar: después la variable ya no tiene proyecto y no
+      // hay forma de saber cuántas eran las de este. El contador global de la
+      // bóveda no sirve porque puede haber huérfanas de otros borrados.
+      const rescued = await api.getProjectEnvVars(candidate.id).then(env => env.vars.length).catch(() => 0)
       await api.deleteProject(candidate.id, true)
       setDeleteCandidate(null)
       if (selectedId === candidate.id) {
@@ -325,8 +336,12 @@ export default function App() {
       }
       await loadProjects(true)
       await github.load()
+      await vault.loadCount()
       notify(
-`Proyecto «${candidate.name}» y sus archivos locales eliminados de tu computador.`)
+`Proyecto «${candidate.name}» y sus archivos locales eliminados de tu computador.` +
+  (rescued
+    ? ` Sus ${rescued} ${rescued === 1 ? 'variable de entorno sigue' : 'variables de entorno siguen'} en la bóveda.`
+    : ''))
     })
   }
 
@@ -407,6 +422,23 @@ export default function App() {
               </span>
             ) : null}
           </button>
+          {/* La bóveda solo aparece cuando hay algo que rescatar: un apartado
+              permanentemente vacío es ruido en la barra lateral. */}
+          {vault.count > 0 && (
+            <button
+              className={viewMode === 'vault' && !selectedId ? 'nav-item active' : 'nav-item'}
+              onClick={() => {
+                setSelectedId(null)
+                setViewMode('vault')
+              }}
+              title="Variables de entorno de proyectos ya borrados"
+            >
+              <KeyRound size={16} /> Bóveda de entorno
+              <span className="badge-count" style={{ marginLeft: 'auto', fontSize: 11, background: 'var(--accent-amber-subtle)', padding: '2px 7px', borderRadius: 10, color: 'var(--accent-amber)' }}>
+                {vault.count}
+              </span>
+            </button>
+          )}
         </nav>
 
         <section className="project-nav">
@@ -689,6 +721,17 @@ export default function App() {
               onTogglePin={handleTogglePin}
               onToggleArchive={handleToggleArchive}
             />
+          ) : viewMode === 'vault' ? (
+            <EnvVaultView
+              orphans={vault.orphans}
+              projects={projects}
+              loading={vault.loading}
+              busy={vault.busy}
+              onLoad={() => void vault.load()}
+              onAdopt={(request, projectName) => void vault.adopt(request, projectName)}
+              onDiscard={(ids, label) => void vault.discard(ids, label)}
+              onCopy={ids => void vault.copyAsEnv(ids)}
+            />
           ) : viewMode === 'github' ? (
             <GitHubHubView
               status={github.status}
@@ -828,6 +871,15 @@ export default function App() {
             setViewMode('github')
             setModal(null)
           }}
+          onVault={
+            vault.count > 0
+              ? () => {
+                  setSelectedId(null)
+                  setViewMode('vault')
+                  setModal(null)
+                }
+              : undefined
+          }
           onRefreshAll={() => void handleRefreshAll()}
           onSelectProject={id => {
             setSelectedId(id)

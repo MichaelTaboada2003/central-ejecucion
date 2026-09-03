@@ -1,6 +1,7 @@
 import {
   Archive,
   ChevronRight,
+  KeyRound,
   LayoutDashboard,
   Pin,
   Plus,
@@ -40,6 +41,7 @@ export function Palette({
   onSettings,
   onDashboard,
   onGitHub,
+  onVault,
   onRefreshAll,
   projects = [],
   onSelectProject,
@@ -49,6 +51,7 @@ export function Palette({
   onSettings: () => void
   onDashboard: () => void
   onGitHub?: () => void
+  onVault?: () => void
   onRefreshAll?: () => void
   projects?: Project[]
   onSelectProject?: (projectId: string) => void
@@ -100,6 +103,21 @@ export function Palette({
       })
     }
 
+    // Solo se ofrece si hay algo que rescatar: `App` pasa el manejador únicamente
+    // cuando la bóveda tiene variables huérfanas.
+    if (onVault) {
+      list.push({
+        id: 'vault',
+        label: 'Abrir la bóveda de variables de entorno',
+        icon: <KeyRound size={15} color="var(--accent-amber)" />,
+        perform: () => {
+          onVault()
+          onClose()
+        },
+        category: 'action',
+      })
+    }
+
     if (onRefreshAll) {
       list.push({
         id: 'refresh-all',
@@ -125,7 +143,7 @@ export function Palette({
     })
 
     return list
-  }, [onClose, onRegister, onDashboard, onGitHub, onRefreshAll, onSettings])
+  }, [onClose, onRegister, onDashboard, onGitHub, onVault, onRefreshAll, onSettings])
 
   const filteredActions = useMemo(() => {
     const normalized = normalizeSearchText(query.trim())

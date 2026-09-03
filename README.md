@@ -39,6 +39,19 @@ Aplicación de escritorio **local-first** para registrar, supervisar, ejecutar y
 - **Clonado en 1 Clic**: Clona repositorios en una carpeta de trabajo configurada con resolución automática de dependencias.
 - **Safe Offload (Archivar a la Nube)**: Libera espacio en disco eliminando la copia local de forma segura únicamente tras verificar que todos los cambios locales y ramas estén sincronizados y subidos a GitHub (`git status` limpio y `git push` al día).
 
+### 🔐 Bóveda de Variables de Entorno
+- **Pestaña `Entorno`**: Gestor completo de variables por proyecto, con alta, edición, comentario por clave y activación/desactivación individual.
+- **Bóveda en SQLite**: Las variables se guardan en la base local del panel, **fuera del árbol del proyecto**. Es lo que permite que sobrevivan a borrar la carpeta: los `.env` están en el `.gitignore`, así que tampoco están en GitHub.
+- **Sincronización bidireccional con los `.env`**:
+  - **Importar**: Trae las variables de `.env`, `.env.local`, `.env.production`… a la bóveda. Fusiona (añade y actualiza) y **nunca borra** una clave que ya solo exista en la bóveda.
+  - **Escribir**: Regenera el fichero del proyecto desde la bóveda, con confirmación explícita que enumera qué claves desaparecerían y una copia del contenido anterior en el directorio de datos de la app.
+  - **Pegar `.env`**: Importa un bloque pegado a mano, contando las variables detectadas antes de guardar nada.
+- **Estado de sincronización por fichero**: Cada `.env` se cruza con la bóveda y se etiqueta como `Sincronizado`, `N sin proteger`, `Desincronizado`, `Solo en la bóveda` o `Plantilla`.
+- **Detección de secretos**: Heurística por segmentos del nombre (`TOKEN`, `SECRET`, `PASSWORD`, `KEY`, `DSN`, `JWT`…) más análisis del valor (`postgres://usuario:clave@host`). Los secretos se muestran ocultos con botón de revelar y copiar; el sesgo es hacia el falso positivo a propósito.
+- **Inyección al ejecutar**: Las variables activas se pasan al proceso hijo respetando la precedencia de Vite y dotenv-flow (`.env` → `.env.<modo>` → `.env.local`). El puerto que resuelve el detector siempre gana, para que un `PORT` guardado no haga arrancar el servidor en un puerto ocupado.
+- **📦 Bóveda de huérfanas**: Al borrar, desregistrar o liberar un proyecto, sus variables **no se borran con él**: quedan huérfanas con el nombre y la ruta del proyecto original. Desde su propia vista se pueden restaurar en otro proyecto (eligiendo el fichero de destino), copiar como `.env` o descartar definitivamente.
+- **Aviso antes de borrar**: El modal de eliminación cuenta cuántas claves están solo en el disco y ofrece guardarlas en la bóveda en el mismo sitio, antes de confirmar.
+
 ### ⚡ Ejecución y Supervisión de Procesos
 - **Control de Servidores**: Inicia (`Run`), detiene y reinicia servidores de desarrollo en segundo plano.
 - **Logs en Tiempo Real**: Consola integrada con salida `stdout`/`stderr`, auto-scroll, filtrado y conteo de líneas.
@@ -54,12 +67,15 @@ Aplicación de escritorio **local-first** para registrar, supervisar, ejecutar y
 src/                         Frontend (React 19 + TypeScript + CSS modular)
   api.ts                     Capa de transporte e invocaciones IPC tipadas hacia Tauri
   types.ts                   Contratos de datos, DTOs y tipos del dominio
-  App.tsx                    Vistas principales (Dashboard, Workspace, GitHub Hub, GitTab, Modales)
+  App.tsx                    Vistas principales (Dashboard, Workspace, GitHub Hub, Bóveda, Modales)
   App.css                    Variables de diseño, paleta HSL/dark mode y componentes
+  lib/envVars.ts             Enmascarado, agrupación y estado de sincronización de las variables
+  hooks/useEnvVars.ts        Bóveda del proyecto abierto; hooks/useEnvVault.ts, las huérfanas
 
 src-tauri/src/               Backend (Rust nativo + Tauri v2)
-  domain.rs                  Estructuras serializables (Project, GitStatusInfo, ProcessInfo, etc.)
+  domain.rs                  Estructuras serializables (Project, GitStatusInfo, ProcessInfo, EnvVar, etc.)
   storage.rs                 Capa de persistencia SQLite en modo WAL con migraciones automáticas
+  env_vars.rs                Formato dotenv (lectura, escritura, precedencia) y heurística de secretos
   scanner.rs                 Motor de detección de frameworks, package managers y puertos
   github.rs                  Servicio de integración con GitHub API y comandos Git CLI
   process.rs                 Gestor de ciclo de vida de procesos hijos y captura de logs
@@ -73,6 +89,7 @@ El archivo de base de datos se ubica en el directorio de datos de la aplicación
 - `projects`: Almacena metadatos del proyecto, ruta canónica, tags, puertos, estado, `is_pinned` e `is_archived`.
 - `command_history`: Historial de ejecuciones con comandos, marcas de tiempo, códigos de salida y errores.
 - `settings`: Clave-valor para preferencias de usuario (token PAT de GitHub, directorio por defecto de clonado, etc.).
+- `project_env_vars`: Bóveda de variables de entorno. Índice único sobre `(project_id, scope, key)` y, a diferencia de `command_history`, clave ajena con **`ON DELETE SET NULL`**: al borrar un proyecto la variable se queda huérfana en lugar de desaparecer, porque un `.env` no está en GitHub y su pérdida sería irreversible.
 
 ---
 
@@ -82,6 +99,7 @@ El archivo de base de datos se ubica en el directorio de datos de la aplicación
 2. **Ejecución Segura de Comandos**: Los procesos se ejecutan pasando el ejecutable y sus argumentos estructurados por separado con `std::process::Command`, sin invocar shells intermedias ni interpolación insegura.
 3. **Limpieza Segura**: Solo se permite eliminar directorios temporales regenerables previamente definidos (`CLEANABLE_DIRECTORIES`). Nunca se tocan archivos `.env`, credenciales ni fuentes.
 4. **Protección de Credenciales**: Las operaciones de Git usan autenticación HTTPS temporal con el token en memoria (`x-access-token`), asegurando que las URLs en `.git/config` queden siempre limpias y sin tokens en texto plano.
+5. **Variables de Entorno**: Se guardan en la base SQLite local **en texto plano**, igual que el token de GitHub. No salen del equipo y nunca se envían a ningún servicio; el enmascarado de la interfaz evita exponerlas en una captura de pantalla, no las cifra en disco. Los ámbitos se validan contra `..` y separadores de ruta antes de tocar el disco, y las copias previas a sobrescribir un `.env` se guardan en el directorio de datos de la aplicación —nunca dentro del repositorio, donde el patrón `.env` del `.gitignore` no cubriría un `.env.bak`—.
 
 ---
 
@@ -109,8 +127,11 @@ pnpm tauri dev
 # Compilación y chequeo de tipos TypeScript
 pnpm build
 
-# Ejecutar suite de pruebas unitarias en Rust (24 tests)
+# Ejecutar suite de pruebas unitarias en Rust (59 tests)
 cargo test --manifest-path src-tauri/Cargo.toml
+
+# Ejecutar suite de pruebas del frontend (121 tests)
+pnpm test
 
 # Generar binario de producción (.app y .dmg)
 pnpm tauri build

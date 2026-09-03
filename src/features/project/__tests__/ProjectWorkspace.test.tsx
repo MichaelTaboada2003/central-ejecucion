@@ -73,7 +73,9 @@ describe('ProjectWorkspace: la acción principal depende de la naturaleza', () =
     })
     const barra = document.querySelector('.tabs') as HTMLElement
     const pestanas = [...barra.querySelectorAll('button')].map(b => (b.textContent ?? '').trim())
-    expect(pestanas).toEqual(['Resumen', 'Git & GitHub', 'Dependencias', 'Disco y limpieza', 'Configuración'])
+    // «Entorno» sigue estando: un script también lee su `.env`, y sus
+    // credenciales corren el mismo riesgo al borrar el proyecto.
+    expect(pestanas).toEqual(['Resumen', 'Git & GitHub', 'Dependencias', 'Disco y limpieza', 'Entorno', 'Configuración'])
   })
 
   it('un cuaderno abre Jupyter Lab', async () => {

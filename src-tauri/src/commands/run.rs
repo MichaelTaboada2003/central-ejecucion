@@ -31,7 +31,17 @@ pub fn run_project(request: RunProjectRequest, app: tauri::AppHandle, state: tau
         }
     }
 
-    let spec = scanner::command_for_action_on_port(&root, &scan, &request.action, request.script.as_deref(), desired_port)?;
+    let mut spec = scanner::command_for_action_on_port(&root, &scan, &request.action, request.script.as_deref(), desired_port)?;
+    // Las variables de la bóveda se inyectan DEBAJO de las que calcula el
+    // detector, no encima: `scan` resuelve `PORT` al primer puerto libre, y un
+    // `PORT=3000` guardado en la bóveda haría que el servidor intentase abrir
+    // el puerto ocupado mientras el registro anota el nuevo.
+    let vault = state.with_storage(|db| db.list_env_vars_for_project(&request.project_id))?;
+    if !vault.is_empty() {
+        let mut merged = crate::env_vars::merge_for_process(&vault);
+        merged.extend(std::mem::take(&mut spec.env));
+        spec.env = merged;
+    }
     match state.processes.start(app, state.storage.clone(), project.clone(), request.action, spec) {
         Ok(process) => {
             invalidate_probe_cache();

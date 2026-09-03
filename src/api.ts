@@ -1,8 +1,16 @@
 import { invoke } from '@tauri-apps/api/core'
+import { looksLikeSecret } from './lib/envVars'
 import type {
+  AdoptEnvVarsRequest,
   CleanupPreview,
   CloneRepoRequest,
   DiskReport,
+  EnvVar,
+  ImportEnvRequest,
+  ImportEnvResult,
+  ProjectEnvVars,
+  SaveEnvVarRequest,
+  WriteEnvFileResult,
   GitActionResult,
   GitStatusInfo,
   GitHubAccountStatus,
@@ -647,6 +655,46 @@ function persistMockProjects() {
 
 let memoryProjects = loadMockProjects()
 
+// ---------------------------------------------------------------- bóveda simulada
+// Sin Tauri no hay SQLite, así que la bóveda vive en `localStorage` con las
+// mismas reglas que impone el backend: al borrar un proyecto las variables se
+// quedan huérfanas en vez de irse con él.
+const MOCK_ENV_VARS_STORAGE_KEY = 'dev-command-center-env-vars'
+
+function loadMockEnvVars(): EnvVar[] {
+  if (typeof window === 'undefined') return []
+  try {
+    const saved = localStorage.getItem(MOCK_ENV_VARS_STORAGE_KEY)
+    const parsed = saved ? JSON.parse(saved) : null
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function persistMockEnvVars() {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.setItem(MOCK_ENV_VARS_STORAGE_KEY, JSON.stringify(memoryEnvVars))
+  } catch {}
+}
+
+let memoryEnvVars: EnvVar[] = loadMockEnvVars()
+
+/** Marca de quién eran las variables antes de que su proyecto desaparezca. */
+function orphanMockEnvVars(projectId: string) {
+  const project = memoryProjects.find(candidate => candidate.id === projectId)
+  const now = new Date().toISOString()
+  for (const variable of memoryEnvVars) {
+    if (variable.projectId !== projectId) continue
+    variable.projectId = null
+    variable.originProjectName = project?.name ?? variable.originProjectName
+    variable.originProjectPath = project?.path ?? variable.originProjectPath
+    variable.orphanedAt = now
+  }
+  persistMockEnvVars()
+}
+
 const mockIdeSettings: IdeSettings = {
   tools: [
     { id: 'antigravity', label: 'Antigravity IDE', command: 'agy', available: true },
@@ -707,6 +755,7 @@ export const api = {
 
   unregisterProject: async (projectId: string): Promise<void> => {
     if (isTauri) return invoke<void>('unregister_project', { projectId })
+    orphanMockEnvVars(projectId)
     memoryProjects = memoryProjects.filter(p => p.id !== projectId)
     persistMockProjects()
   },
@@ -811,6 +860,7 @@ export const api = {
 
   deleteProject: async (projectId: string, deleteFiles: boolean): Promise<void> => {
     if (isTauri) return invoke<void>('delete_project', { request: { projectId, deleteFiles } })
+    orphanMockEnvVars(projectId)
     const idx = memoryProjects.findIndex(p => p.id === projectId)
     if (idx !== -1) {
       memoryProjects.splice(idx, 1)
@@ -1051,6 +1101,7 @@ export const api = {
   safeOffloadProject: async (projectId: string, force = false): Promise<SafeOffloadResult> => {
     if (isTauri) return invoke<SafeOffloadResult>('safe_offload_project', { projectId, force })
     const proj = memoryProjects.find(p => p.id === projectId)
+    orphanMockEnvVars(projectId)
     memoryProjects = memoryProjects.filter(p => p.id !== projectId)
     persistMockProjects()
     return {
@@ -1159,4 +1210,158 @@ export const api = {
       output: `https://github.com/usuario/${request.repoName}`,
     }
   },
+
+  // ------------------------------------------------- variables de entorno
+
+  getProjectEnvVars: async (projectId: string): Promise<ProjectEnvVars> => {
+    if (isTauri) return invoke<ProjectEnvVars>('get_project_env_vars', { projectId })
+    const vars = memoryEnvVars.filter(variable => variable.projectId === projectId)
+    // Sin acceso al disco no hay nada que cruzar: el navegador solo ve la
+    // bóveda, así que no se inventa ningún fichero ni ningún desajuste.
+    return { projectId, vars, files: mockEnvFiles(vars), unprotectedKeys: 0 }
+  },
+
+  importEnvVars: async (request: ImportEnvRequest): Promise<ImportEnvResult> => {
+    if (isTauri) return invoke<ImportEnvResult>('import_env_vars', { request })
+    if (!request.content) throw new Error('Sin Tauri no se puede leer el fichero del proyecto: pega su contenido.')
+    const result: ImportEnvResult = { scope: request.scope, added: 0, updated: 0, unchanged: 0 }
+    for (const [key, value] of parseMockEnv(request.content)) {
+      const existing = memoryEnvVars.find(
+        variable => variable.projectId === request.projectId && variable.scope === request.scope && variable.key === key
+      )
+      if (!existing) {
+        memoryEnvVars.push(mockEnvVar(request.projectId, request.scope, key, value))
+        result.added += 1
+      } else if (existing.value !== value) {
+        existing.value = value
+        existing.isSecret = existing.isSecret || looksLikeSecret(key, value)
+        existing.updatedAt = new Date().toISOString()
+        result.updated += 1
+      } else {
+        result.unchanged += 1
+      }
+    }
+    persistMockEnvVars()
+    return result
+  },
+
+  saveEnvVar: async (request: SaveEnvVarRequest): Promise<EnvVar> => {
+    if (isTauri) return invoke<EnvVar>('save_env_var', { request })
+    const existing = request.id ? memoryEnvVars.find(variable => variable.id === request.id) : undefined
+    if (existing) {
+      existing.scope = request.scope
+      existing.key = request.key
+      existing.value = request.value
+      existing.isSecret = request.isSecret ?? existing.isSecret
+      existing.isEnabled = request.isEnabled ?? existing.isEnabled
+      existing.comment = request.comment ?? null
+      existing.updatedAt = new Date().toISOString()
+      persistMockEnvVars()
+      return existing
+    }
+    const created = mockEnvVar(request.projectId || '', request.scope, request.key, request.value)
+    created.isSecret = request.isSecret ?? created.isSecret
+    created.isEnabled = request.isEnabled ?? true
+    created.comment = request.comment ?? null
+    memoryEnvVars.push(created)
+    persistMockEnvVars()
+    return created
+  },
+
+  deleteEnvVars: async (ids: string[]): Promise<number> => {
+    if (isTauri) return invoke<number>('delete_env_vars', { ids })
+    const before = memoryEnvVars.length
+    memoryEnvVars = memoryEnvVars.filter(variable => !ids.includes(variable.id))
+    persistMockEnvVars()
+    return before - memoryEnvVars.length
+  },
+
+  writeEnvFile: async (projectId: string, scope: string): Promise<WriteEnvFileResult> => {
+    if (isTauri) return invoke<WriteEnvFileResult>('write_env_file', { request: { projectId, scope, confirmed: true } })
+    throw new Error('Escribir ficheros del proyecto requiere la aplicación de escritorio.')
+  },
+
+  listOrphanEnvVars: async (): Promise<EnvVar[]> => {
+    if (isTauri) return invoke<EnvVar[]>('list_orphan_env_vars')
+    return memoryEnvVars.filter(variable => variable.projectId === null)
+  },
+
+  countOrphanEnvVars: async (): Promise<number> => {
+    if (isTauri) return invoke<number>('count_orphan_env_vars')
+    return memoryEnvVars.filter(variable => variable.projectId === null).length
+  },
+
+  adoptEnvVars: async (request: AdoptEnvVarsRequest): Promise<number> => {
+    if (isTauri) return invoke<number>('adopt_env_vars', { request })
+    let adopted = 0
+    for (const variable of memoryEnvVars) {
+      if (variable.projectId !== null || !request.ids.includes(variable.id)) continue
+      variable.projectId = request.projectId
+      variable.scope = request.scope || variable.scope
+      variable.orphanedAt = null
+      variable.updatedAt = new Date().toISOString()
+      adopted += 1
+    }
+    persistMockEnvVars()
+    return adopted
+  },
+
+  exportEnvVars: async (projectId: string | null, ids?: string[]): Promise<string> => {
+    if (isTauri) return invoke<string>('export_env_vars', { projectId, ids: ids ?? null })
+    const selected = ids?.length
+      ? memoryEnvVars.filter(variable => ids.includes(variable.id))
+      : memoryEnvVars.filter(variable => variable.projectId === projectId)
+    return selected.map(variable => `${variable.key}=${variable.value}`).join('\n')
+  },
+}
+
+/** Interpretación mínima de un bloque pegado, solo para el modo navegador. */
+function parseMockEnv(content: string): Array<[string, string]> {
+  const entries = new Map<string, string>()
+  for (const rawLine of content.split('\n')) {
+    const line = rawLine.trim()
+    if (!line || line.startsWith('#')) continue
+    const assignment = line.startsWith('export ') ? line.slice('export '.length) : line
+    const separator = assignment.indexOf('=')
+    if (separator <= 0) continue
+    const key = assignment.slice(0, separator).trim()
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue
+    entries.set(key, assignment.slice(separator + 1).trim().replace(/^['"]|['"]$/g, ''))
+  }
+  return [...entries.entries()]
+}
+
+function mockEnvVar(projectId: string, scope: string, key: string, value: string): EnvVar {
+  const now = new Date().toISOString()
+  return {
+    id: `env-${Math.random().toString(36).slice(2, 10)}`,
+    projectId: projectId || null,
+    scope,
+    key,
+    value,
+    isSecret: looksLikeSecret(key, value),
+    isEnabled: true,
+    comment: null,
+    createdAt: now,
+    updatedAt: now,
+    originProjectName: null,
+    originProjectPath: null,
+    orphanedAt: null,
+  }
+}
+
+/** Los ámbitos que ya existen en la bóveda, presentados como ficheros. */
+function mockEnvFiles(vars: EnvVar[]): ProjectEnvVars['files'] {
+  const scopes = [...new Set(vars.map(variable => variable.scope))]
+  return scopes.map(scope => ({
+    name: scope,
+    path: `(sin disco)/${scope}`,
+    isTemplate: /\.(example|sample|template)$/i.test(scope),
+    sizeBytes: 0,
+    fileVarCount: 0,
+    vaultVarCount: vars.filter(variable => variable.scope === scope).length,
+    missingInVault: [],
+    differing: [],
+    onlyInVault: vars.filter(variable => variable.scope === scope).map(variable => variable.key),
+  }))
 }

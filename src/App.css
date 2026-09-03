@@ -4224,3 +4224,570 @@ button.github-link-pill {
   transform: translateY(-1px);
 }
 
+
+/* ============================================================================
+   BÓVEDA DE VARIABLES DE ENTORNO
+   Pestaña «Entorno» del proyecto y vista de variables huérfanas.
+   ========================================================================== */
+
+.env-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Aviso de cabecera. El tono `warn` es el que importa: son las claves que
+   están en el disco y no en la bóveda, es decir, las que se perderían. */
+.env-alert {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  margin-top: 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface-0);
+}
+
+.env-alert strong {
+  display: block;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.env-alert p {
+  margin: 3px 0 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.env-alert.warn {
+  border-color: var(--accent-amber-border);
+  background: var(--accent-amber-subtle);
+}
+
+.env-alert.warn > svg {
+  color: var(--accent-amber);
+  flex-shrink: 0;
+}
+
+.env-alert.good {
+  border-color: var(--accent-primary-border);
+  background: var(--accent-primary-subtle);
+}
+
+.env-alert.good > svg {
+  color: var(--accent-primary);
+  flex-shrink: 0;
+}
+
+/* ------------------------------------------------ ficheros .env del proyecto */
+
+.env-file-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.env-file-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface-0);
+  border-radius: var(--radius-md);
+  transition: all var(--transition-fast);
+}
+
+.env-file-row:hover {
+  border-color: var(--border-muted);
+  background: var(--bg-surface-2);
+}
+
+.env-file-row.pending {
+  border-color: var(--accent-amber-border);
+}
+
+.env-file-id {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+  color: var(--accent-cyan);
+}
+
+.env-file-id strong {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--text-primary);
+}
+
+.env-file-id small {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.env-sync-pill {
+  flex-shrink: 0;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--border-muted);
+  color: var(--text-secondary);
+  background: var(--bg-surface-1);
+  cursor: help;
+}
+
+.env-sync-pill.synced {
+  border-color: var(--accent-primary-border);
+  background: var(--accent-primary-subtle);
+  color: var(--accent-primary);
+}
+
+.env-sync-pill.pending {
+  border-color: var(--accent-amber-border);
+  background: var(--accent-amber-subtle);
+  color: var(--accent-amber);
+}
+
+.env-sync-pill.drifted {
+  border-color: var(--accent-indigo-border);
+  background: var(--accent-indigo-subtle);
+  color: var(--accent-indigo);
+}
+
+.env-file-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.env-file-actions button {
+  font-size: 11.5px;
+  padding: 5px 10px;
+}
+
+/* --------------------------------------------- confirmación de una escritura */
+
+.env-confirm {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--accent-amber-border);
+  background: var(--accent-amber-subtle);
+}
+
+.env-confirm strong {
+  display: block;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.env-confirm p {
+  margin: 5px 0 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.env-confirm-loss code {
+  color: var(--accent-rose);
+}
+
+.env-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* --------------------------------------------------------- pegar un bloque */
+
+.env-paste {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.env-paste label {
+  display: grid;
+  gap: 5px;
+  max-width: 240px;
+}
+
+.env-paste label span,
+.env-draft label span {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.env-paste textarea {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.env-paste-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+/* ---------------------------------------------------- grupos por ámbito */
+
+.env-group {
+  margin-top: 18px;
+}
+
+.env-group-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--accent-cyan);
+}
+
+.env-group-heading strong {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.env-group-count {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  background: var(--bg-surface-2);
+  color: var(--text-secondary);
+}
+
+.env-inline-link {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 6px;
+  border: none;
+  background: none;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.env-inline-link:hover:not(:disabled) {
+  color: var(--accent-primary);
+  background: var(--bg-surface-2);
+}
+
+/* ------------------------------------------------------- filas de variables */
+
+.env-var-list {
+  display: grid;
+  gap: 5px;
+}
+
+.env-var-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(0, 1.4fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface-0);
+  transition: all var(--transition-fast);
+}
+
+.env-var-row:hover {
+  border-color: var(--border-muted);
+  background: var(--bg-surface-2);
+}
+
+/* Una variable deshabilitada no se inyecta al ejecutar: tiene que verse. */
+.env-var-row.disabled {
+  opacity: 0.5;
+}
+
+.env-var-row.disabled .env-var-key code {
+  text-decoration: line-through;
+}
+
+.env-var-key {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.env-var-key code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.env-var-key small {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.env-secret-icon {
+  flex-shrink: 0;
+  color: var(--accent-amber);
+}
+
+.env-key-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  margin: 0 3px;
+  border-radius: 50%;
+  background: var(--border-prominent);
+}
+
+.env-var-value {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 4.8em;
+  overflow: hidden;
+}
+
+.env-var-value.masked {
+  color: var(--text-muted);
+  letter-spacing: 0.12em;
+  word-break: normal;
+}
+
+.env-var-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  justify-content: flex-end;
+}
+
+.env-var-actions .icon-button {
+  width: 26px;
+  height: 26px;
+}
+
+.icon-button.danger-icon:hover:not(:disabled) {
+  color: var(--accent-rose);
+  background: var(--accent-rose-subtle);
+}
+
+/* ----------------------------------------------------- alta y edición */
+
+.env-draft {
+  margin: 12px 0;
+  padding: 14px;
+  border: 1px solid var(--accent-primary-border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface-1);
+}
+
+.env-draft-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 180px;
+  gap: 12px;
+}
+
+.env-draft label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.env-draft input,
+.env-draft textarea {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.env-draft textarea {
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.env-draft-value,
+.env-draft-comment {
+  grid-column: 1 / -1;
+}
+
+.env-draft-comment input {
+  font-family: var(--font-sans);
+}
+
+.env-draft-footer {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.env-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.env-checkbox input {
+  width: auto;
+  accent-color: var(--accent-primary);
+  cursor: pointer;
+}
+
+.env-draft-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+
+/* -------------------------------------------------- insignia en la pestaña */
+
+.tab-badge {
+  min-width: 17px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.tab-badge.warn {
+  background: var(--accent-amber);
+  color: #0a0e16;
+}
+
+/* ------------------------------------------------------ variables huérfanas */
+
+.orphan-group .card-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.orphan-restore-form {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.orphan-restore-form label {
+  display: grid;
+  gap: 5px;
+  min-width: 200px;
+}
+
+.orphan-restore-form span {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+/* --------------------------------------------- aviso del modal de borrado */
+
+.delete-env-callout {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 13px 15px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+}
+
+.delete-env-callout > svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.delete-env-callout strong {
+  display: block;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.delete-env-callout p {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.delete-env-callout button {
+  margin-top: 10px;
+  font-size: 11.5px;
+  padding: 5px 10px;
+}
+
+.delete-env-callout.warn {
+  border-color: var(--accent-amber-border);
+  background: var(--accent-amber-subtle);
+}
+
+.delete-env-callout.warn > svg {
+  color: var(--accent-amber);
+}
+
+.delete-env-callout.good {
+  border-color: var(--accent-primary-border);
+  background: var(--accent-primary-subtle);
+}
+
+.delete-env-callout.good > svg {
+  color: var(--accent-primary);
+}
+
+@media (max-width: 1100px) {
+  .env-var-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .env-var-actions {
+    justify-content: flex-start;
+  }
+
+  .env-draft-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .env-file-row {
+    flex-wrap: wrap;
+  }
+}

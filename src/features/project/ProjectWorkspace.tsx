@@ -1,4 +1,4 @@
-import { AlertTriangle, AppWindow, Archive, ArchiveRestore, ArrowLeft, ArrowUpRight, Bot, ChevronRight, CircleStop, FileCode2, FolderOpen, GitFork, HardDrive, LayoutDashboard, LoaderCircle, PackageOpen, Pin, Play, RefreshCw, RotateCcw, Settings2, SquareTerminal, Terminal, Trash2 } from 'lucide-react'
+import { AlertTriangle, AppWindow, Archive, ArchiveRestore, ArrowLeft, ArrowUpRight, Bot, ChevronRight, CircleStop, FileCode2, FolderOpen, GitFork, HardDrive, KeyRound, LayoutDashboard, LoaderCircle, PackageOpen, Pin, Play, RefreshCw, RotateCcw, Settings2, SquareTerminal, Terminal, Trash2 } from 'lucide-react'
 import { useEffect, useMemo } from 'react'
 import { api } from '../../api'
 import { formatDate } from '../../lib/format'
@@ -9,8 +9,10 @@ import type { TerminalEntry } from '../../lib/logs'
 import type { DiskReport, GitHubRepo, Project, ProjectDetail } from '../../types'
 import { GitHubLogo } from '../../components/GitHubLogo'
 import { StatusPill } from '../../components/Status'
+import { useEnvVars } from '../../hooks/useEnvVars'
 import { ConfigurationTab } from './tabs/ConfigurationTab'
 import { DependenciesTab } from './tabs/DependenciesTab'
+import { EnvironmentTab } from './tabs/EnvironmentTab'
 import { DiskTab } from './tabs/DiskTab'
 import { GitTab } from './tabs/GitTab'
 import { ProcessesTab } from './tabs/ProcessesTab'
@@ -28,6 +30,7 @@ const tabs: Array<{ id: Tab; label: string; icon: typeof LayoutDashboard }> = [
   { id: 'dependencies', label: 'Dependencias', icon: PackageOpen },
   { id: 'disk', label: 'Disco y limpieza', icon: HardDrive },
   { id: 'scripts', label: 'Scripts', icon: FileCode2 },
+  { id: 'environment', label: 'Entorno', icon: KeyRound },
   { id: 'configuration', label: 'Configuración', icon: Settings2 },
 ]
 
@@ -80,6 +83,10 @@ export function ProjectWorkspace({
   onToggleArchive: (project: Project) => void
 }) {
   const { project, scan, process, recentCommands } = detail
+  // La bóveda se carga con el proyecto abierto, no al pisar la pestaña: la
+  // insignia de «claves sin proteger» tiene que poder avisar antes de que nadie
+  // entre a mirar.
+  const env = useEnvVars({ projectId: project.id, notify: onNotify })
   const isRunning = project.status === 'running'
   const isMissingDeps = !scan.installedDependencies && scan.declaredDependencies > 0
   const kind = projectKind(project)
@@ -343,6 +350,14 @@ export function ProjectWorkspace({
           >
             <Icon size={15} />
             {label}
+            {id === 'environment' && !!env.data?.unprotectedKeys && (
+              <span
+                className="tab-badge warn"
+                title={`${env.data.unprotectedKeys} claves están solo en los ficheros del disco y se perderían al borrar el proyecto`}
+              >
+                {env.data.unprotectedKeys}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -379,6 +394,29 @@ export function ProjectWorkspace({
         <DiskTab disk={disk} onLoad={onDisk} onPreviewCleanup={onPreviewCleanup} busy={busy} />
       )}
       {tab === 'scripts' && <ScriptsTab scripts={scan.scripts} onRun={onRun} busy={busy} />}
+      {tab === 'environment' && (
+        <EnvironmentTab
+          data={env.data}
+          loading={env.loading}
+          busy={env.busy}
+          onSave={draft =>
+            env.saveVar({
+              id: draft.id ?? null,
+              projectId: project.id,
+              scope: draft.scope.trim() || '.env',
+              key: draft.key.trim(),
+              value: draft.value,
+              isSecret: draft.isSecret,
+              isEnabled: draft.isEnabled,
+              comment: draft.comment,
+            })
+          }
+          onDelete={env.deleteVars}
+          onImport={env.importVars}
+          onWrite={env.writeFile}
+          onCopy={env.copyAsEnv}
+        />
+      )}
       {tab === 'configuration' && <ConfigurationTab project={project} scan={scan} onNotify={onNotify} />}
     </>
   )

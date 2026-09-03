@@ -371,3 +371,129 @@ pub struct PublishToGitHubRequest {
     pub description: Option<String>,
     pub is_private: bool,
 }
+
+/// Una variable de entorno guardada en la bóveda local.
+///
+/// `project_id` es `Option` a propósito: al borrar un proyecto la clave ajena
+/// se pone a `NULL` (`ON DELETE SET NULL`) en vez de arrastrar la fila, y la
+/// variable queda «huérfana». Es lo contrario de lo que hace
+/// `command_history`, que sí usa `ON DELETE CASCADE`: un historial de comandos
+/// sin proyecto no sirve para nada, mientras que una credencial que no está en
+/// GitHub ni en el disco es irrecuperable.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvVar {
+    pub id: String,
+    pub project_id: Option<String>,
+    /// Fichero de entorno al que pertenece (`.env`, `.env.local`…). Es también
+    /// lo que fija la precedencia al fusionar.
+    pub scope: String,
+    pub key: String,
+    pub value: String,
+    /// Si la interfaz debe ocultar el valor. Se calcula al importar con la
+    /// heurística de [`crate::env_vars::is_secret_key`] y después se respeta lo
+    /// que diga el usuario.
+    pub is_secret: bool,
+    /// Una variable deshabilitada no se inyecta al ejecutar y se escribe
+    /// comentada en el fichero.
+    pub is_enabled: bool,
+    pub comment: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    /// Nombre del proyecto al que pertenecía, rellenado justo antes de borrarlo.
+    /// Sin esto una huérfana sería un montón de claves sin contexto.
+    pub origin_project_name: Option<String>,
+    pub origin_project_path: Option<String>,
+    pub orphaned_at: Option<String>,
+}
+
+/// Estado de un fichero `.env` del proyecto frente a la bóveda.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvFileInfo {
+    pub name: String,
+    pub path: String,
+    /// `.env.example` y compañía: dan la lista de claves esperadas, no valores.
+    pub is_template: bool,
+    pub size_bytes: u64,
+    pub file_var_count: usize,
+    pub vault_var_count: usize,
+    /// Claves que están en el disco y no en la bóveda: se perderían al borrar.
+    pub missing_in_vault: Vec<String>,
+    /// Claves con el mismo nombre y distinto valor en disco y en la bóveda.
+    pub differing: Vec<String>,
+    /// Claves que solo están en la bóveda: aparecerían al escribir el fichero.
+    pub only_in_vault: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectEnvVars {
+    pub project_id: String,
+    pub vars: Vec<EnvVar>,
+    pub files: Vec<EnvFileInfo>,
+    /// Claves presentes en algún fichero del disco que la bóveda no tiene. Es
+    /// el número que justifica el aviso antes de borrar un proyecto.
+    pub unprotected_keys: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveEnvVarRequest {
+    /// Ausente al crear; presente al editar una fila existente.
+    pub id: Option<String>,
+    pub project_id: Option<String>,
+    pub scope: String,
+    pub key: String,
+    pub value: String,
+    pub is_secret: Option<bool>,
+    pub is_enabled: Option<bool>,
+    pub comment: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportEnvRequest {
+    pub project_id: String,
+    pub scope: String,
+    /// Contenido a interpretar. Si es `None` se lee del fichero `scope` en la
+    /// carpeta del proyecto; con valor, se importa lo que se haya pegado.
+    pub content: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportEnvResult {
+    pub scope: String,
+    pub added: usize,
+    pub updated: usize,
+    pub unchanged: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteEnvFileRequest {
+    pub project_id: String,
+    pub scope: String,
+    /// Sobrescribir un `.env` es destructivo, así que la interfaz tiene que
+    /// pedirlo explícitamente tras mostrar el resumen.
+    pub confirmed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteEnvFileResult {
+    pub path: String,
+    pub scope: String,
+    pub written: usize,
+    /// Copia del fichero anterior. Se genera siempre que había algo que pisar.
+    pub backup_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdoptEnvVarsRequest {
+    pub ids: Vec<String>,
+    pub project_id: String,
+    pub scope: Option<String>,
+}

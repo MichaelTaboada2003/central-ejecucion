@@ -224,3 +224,93 @@ export interface PublishToGitHubRequest {
   description?: string | null
   isPrivate: boolean
 }
+
+/**
+ * Una variable de entorno de la bóveda local.
+ *
+ * `projectId` puede ser `null`: al borrar un proyecto la variable no se borra
+ * con él, se queda «huérfana». El `.env` está gitignoreado y por tanto tampoco
+ * está en GitHub, así que arrastrarla haría irrecuperable la credencial.
+ */
+export interface EnvVar {
+  id: string
+  projectId: string | null
+  /** Fichero al que pertenece (`.env`, `.env.local`…). Fija la precedencia. */
+  scope: string
+  key: string
+  value: string
+  /** Si el valor se oculta en la interfaz. */
+  isSecret: boolean
+  /** Una deshabilitada no se inyecta al ejecutar y se escribe comentada. */
+  isEnabled: boolean
+  comment: string | null
+  createdAt: string
+  updatedAt: string
+  originProjectName: string | null
+  originProjectPath: string | null
+  orphanedAt: string | null
+}
+
+/** Estado de un fichero `.env` del proyecto frente a la bóveda. */
+export interface EnvFileInfo {
+  name: string
+  path: string
+  /** `.env.example` y compañía: dan las claves esperadas, no valores reales. */
+  isTemplate: boolean
+  sizeBytes: number
+  fileVarCount: number
+  vaultVarCount: number
+  /** Claves en disco que la bóveda no tiene: se perderían al borrar. */
+  missingInVault: string[]
+  /** Mismo nombre, distinto valor en disco y en la bóveda. */
+  differing: string[]
+  /** Claves que solo están en la bóveda: aparecerían al escribir el fichero. */
+  onlyInVault: string[]
+}
+
+export interface ProjectEnvVars {
+  projectId: string
+  vars: EnvVar[]
+  files: EnvFileInfo[]
+  /** Claves distintas en disco que la bóveda no protege. */
+  unprotectedKeys: number
+}
+
+export interface SaveEnvVarRequest {
+  id?: string | null
+  projectId?: string | null
+  scope: string
+  key: string
+  value: string
+  isSecret?: boolean | null
+  isEnabled?: boolean | null
+  comment?: string | null
+}
+
+export interface ImportEnvRequest {
+  projectId: string
+  scope: string
+  /** Sin contenido se lee el fichero `scope` del proyecto; con él, lo pegado. */
+  content?: string | null
+}
+
+export interface ImportEnvResult {
+  scope: string
+  added: number
+  updated: number
+  unchanged: number
+}
+
+export interface WriteEnvFileResult {
+  path: string
+  scope: string
+  written: number
+  /** Copia del contenido anterior, si había algo que pisar. */
+  backupPath: string | null
+}
+
+export interface AdoptEnvVarsRequest {
+  ids: string[]
+  projectId: string
+  scope?: string | null
+}

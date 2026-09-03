@@ -48,6 +48,10 @@ pub fn safe_offload_project(project_id: String, force: bool, app: tauri::AppHand
     }
     let path = Path::new(&project.canonical_path);
     github::GitHubService::safe_offload_project(path, force)?;
+    // Con `force` la comprobación de ficheros ignorados se salta, así que un
+    // `.env` que no está en GitHub se va con la carpeta: las variables que
+    // hubiera en la bóveda son lo único que queda de él.
+    let _ = state.with_storage(|db| db.stamp_env_var_origin(&project_id));
     state.with_storage(|db| db.delete_project(&project_id))?;
     Ok(SafeOffloadResult {
         success: true,

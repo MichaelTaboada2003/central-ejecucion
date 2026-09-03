@@ -1,5 +1,6 @@
 pub mod disk;
 pub mod domain;
+pub mod env_vars;
 pub mod github;
 pub mod ide;
 #[cfg(feature = "mcp")]
@@ -141,6 +142,16 @@ pub fn run() {
             commands::projects::unregister_project,
             commands::projects::toggle_pin_project,
             commands::projects::toggle_archive_project,
+            // variables de entorno
+            commands::env_vars::get_project_env_vars,
+            commands::env_vars::import_env_vars,
+            commands::env_vars::save_env_var,
+            commands::env_vars::delete_env_vars,
+            commands::env_vars::write_env_file,
+            commands::env_vars::list_orphan_env_vars,
+            commands::env_vars::count_orphan_env_vars,
+            commands::env_vars::adopt_env_vars,
+            commands::env_vars::export_env_vars,
             // run
             commands::run::run_project,
             commands::run::stop_project,
