@@ -6,8 +6,8 @@
 
 use crate::disk;
 use crate::domain::{
-    CleanupPreview, CommandRecord, CommandSpec, DiskReport, LogEntry, ProcessInfo, Project,
-    ProjectDetail, ProjectStatus, ProjectScan,
+    CleanupPreview, CommandRecord, CommandSpec, DiskReport, EnvFileInfo, EnvVar,
+    LogEntry, ProcessInfo, Project, ProjectDetail, ProjectScan, ProjectStatus,
 };
 use crate::ide;
 use crate::process::enhanced_path;
@@ -155,6 +155,91 @@ pub struct IdeConfigMcp {
 pub struct SaveIdeSettingsMcpRequest {
     #[schemars(description = "List of IDE and editor tool configurations")]
     pub tools: Vec<IdeConfigMcp>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ListEnvVarsMcpRequest {
+    #[schemars(description = "UUID, folder path, or name of a project registered in Dev Command Center")]
+    pub project_id: String,
+    #[schemars(description = "If true, reveals unmasked secret values instead of masking them (defaults to false)")]
+    pub reveal_secrets: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SetEnvVarMcpRequest {
+    #[schemars(description = "UUID, folder path, or name of a project registered in Dev Command Center")]
+    pub project_id: String,
+    #[schemars(description = "Variable key name, e.g. 'DATABASE_URL' or 'VITE_API_KEY'")]
+    pub key: String,
+    #[schemars(description = "Variable string value")]
+    pub value: String,
+    #[schemars(description = "Target file scope, e.g. '.env' (default) or '.env.local'")]
+    pub scope: Option<String>,
+    #[schemars(description = "Whether to treat as secret (masked in UI/logs). Auto-detected from key/value if omitted.")]
+    pub is_secret: Option<bool>,
+    #[schemars(description = "Whether the variable is enabled (injected on execution). Default true.")]
+    pub is_enabled: Option<bool>,
+    #[schemars(description = "Optional note or comment explaining this variable")]
+    pub comment: Option<String>,
+    #[schemars(description = "Whether to immediately write and sync the scope file (.env) to disk in the project folder. Defaults to true.")]
+    pub write_to_disk: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct WriteEnvFileMcpRequest {
+    #[schemars(description = "UUID, folder path, or name of a project registered in Dev Command Center")]
+    pub project_id: String,
+    #[schemars(description = "File scope to write, e.g. '.env' (default) or '.env.local'")]
+    pub scope: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ImportEnvFileMcpRequest {
+    #[schemars(description = "UUID, folder path, or name of a project registered in Dev Command Center")]
+    pub project_id: String,
+    #[schemars(description = "File scope in project root to read, e.g. '.env' (default) or '.env.local'")]
+    pub scope: Option<String>,
+    #[schemars(description = "Optional raw text content. If omitted, reads the file directly from project root on disk.")]
+    pub content: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SetEnvVarMcpResponse {
+    pub variable: EnvVar,
+    pub written_to_disk: bool,
+    pub disk_write: Option<WriteEnvFileMcpResult>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WriteEnvFileMcpResult {
+    pub path: String,
+    pub scope: String,
+    pub written_count: usize,
+    pub backup_path: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EnvVarViewMcp {
+    pub id: String,
+    pub scope: String,
+    pub key: String,
+    pub value: String,
+    pub is_secret: bool,
+    pub is_enabled: bool,
+    pub comment: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ListEnvVarsMcpResponse {
+    pub project_id: String,
+    pub project_name: String,
+    pub project_path: String,
+    pub total_vault_vars: usize,
+    pub unprotected_disk_keys: usize,
+    pub disk_files: Vec<EnvFileInfo>,
+    pub vars: Vec<EnvVarViewMcp>,
 }
 
 #[derive(Debug, Serialize)]
@@ -694,6 +779,158 @@ impl DevCommandCenterMcp {
             as_json(updated)
         })
     }
+
+    #[tool(description = "Save or update an environment variable in the Dev Command Center vault, and by default (write_to_disk=true) writes and syncs it immediately to the disk .env file in the project root.")]
+    fn dev_command_center_set_env_var(&self, Parameters(request): Parameters<SetEnvVarMcpRequest>) -> Result<String, String> {
+        self.with_state(|state| {
+            let project = resolve_project(&state.storage, &request.project_id)?;
+            let key = request.key.trim().to_string();
+            if !crate::env_vars::is_valid_key(&key) {
+                return Err("El nombre debe empezar por una letra o «_» y seguir con letras, números o «_».".into());
+            }
+            let scope = request.scope.as_deref().unwrap_or(".env").trim().to_string();
+            if !crate::env_vars::is_valid_scope(&scope) {
+                return Err(format!("«{scope}» no es un nombre de fichero de entorno válido."));
+            }
+
+            let existing_vars = state.storage.list_env_vars_for_project(&project.id)?;
+            let existing = existing_vars.into_iter().find(|v| v.scope == scope && v.key == key);
+
+            let now = Utc::now().to_rfc3339();
+            let comment = request.comment.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+
+            let variable = match existing {
+                Some(prev) => EnvVar {
+                    value: request.value,
+                    is_secret: request.is_secret.unwrap_or(prev.is_secret),
+                    is_enabled: request.is_enabled.unwrap_or(prev.is_enabled),
+                    comment: comment.or(prev.comment),
+                    updated_at: now,
+                    ..prev
+                },
+                None => {
+                    let is_secret = request.is_secret.unwrap_or_else(|| crate::env_vars::is_secret_key(&key, &request.value));
+                    EnvVar {
+                        id: Uuid::new_v4().to_string(),
+                        project_id: Some(project.id.clone()),
+                        scope: scope.clone(),
+                        key: key.clone(),
+                        value: request.value,
+                        is_secret,
+                        is_enabled: request.is_enabled.unwrap_or(true),
+                        comment,
+                        created_at: now.clone(),
+                        updated_at: now,
+                        origin_project_name: None,
+                        origin_project_path: None,
+                        orphaned_at: None,
+                    }
+                }
+            };
+
+            state.storage.upsert_env_var(&variable)?;
+
+            let should_write = request.write_to_disk.unwrap_or(true);
+            let disk_write = if should_write {
+                Some(write_scope_to_disk_with_backup(&state.storage, &state.database_path, &project, &scope)?)
+            } else {
+                None
+            };
+
+            as_json(SetEnvVarMcpResponse {
+                variable,
+                written_to_disk: disk_write.is_some(),
+                disk_write,
+            })
+        })
+    }
+
+    #[tool(description = "Write all environment variables for a given scope (e.g. '.env') from the vault directly to disk in the project root. Automatically backs up any previous file.")]
+    fn dev_command_center_write_env_file(&self, Parameters(request): Parameters<WriteEnvFileMcpRequest>) -> Result<String, String> {
+        self.with_state(|state| {
+            let project = resolve_project(&state.storage, &request.project_id)?;
+            let scope = request.scope.as_deref().unwrap_or(".env").trim();
+            let result = write_scope_to_disk_with_backup(&state.storage, &state.database_path, &project, scope)?;
+            as_json(result)
+        })
+    }
+
+    #[tool(description = "List environment variables for a project from the vault and report real-time status of .env files on disk (missing keys, sync state).")]
+    fn dev_command_center_list_env_vars(&self, Parameters(request): Parameters<ListEnvVarsMcpRequest>) -> Result<String, String> {
+        self.with_state(|state| {
+            let project = resolve_project(&state.storage, &request.project_id)?;
+            let vars = state.storage.list_env_vars_for_project(&project.id)?;
+            let disk_files = match trusted_project_root(&project) {
+                Ok(root) => crate::env_vars::inspect_env_files(&root, &vars),
+                Err(_) => Vec::new(),
+            };
+
+            let mut unprotected: Vec<&str> = disk_files
+                .iter()
+                .filter(|file| !file.is_template)
+                .flat_map(|file| file.missing_in_vault.iter().map(String::as_str))
+                .collect();
+            unprotected.sort_unstable();
+            unprotected.dedup();
+            let unprotected_disk_keys = unprotected.len();
+
+            let reveal = request.reveal_secrets.unwrap_or(false);
+            let views: Vec<EnvVarViewMcp> = vars.into_iter().map(|v| {
+                let display_val = if v.is_secret && !reveal {
+                    mask_env_value(&v.value)
+                } else {
+                    v.value
+                };
+                EnvVarViewMcp {
+                    id: v.id,
+                    scope: v.scope,
+                    key: v.key,
+                    value: display_val,
+                    is_secret: v.is_secret,
+                    is_enabled: v.is_enabled,
+                    comment: v.comment,
+                    created_at: v.created_at,
+                    updated_at: v.updated_at,
+                }
+            }).collect();
+
+            as_json(ListEnvVarsMcpResponse {
+                project_id: project.id,
+                project_name: project.name,
+                project_path: project.path,
+                total_vault_vars: views.len(),
+                unprotected_disk_keys,
+                disk_files,
+                vars: views,
+            })
+        })
+    }
+
+    #[tool(description = "Import environment variables from a disk .env file or raw content into the Dev Command Center vault.")]
+    fn dev_command_center_import_env_file(&self, Parameters(request): Parameters<ImportEnvFileMcpRequest>) -> Result<String, String> {
+        self.with_state(|state| {
+            let project = resolve_project(&state.storage, &request.project_id)?;
+            let scope = request.scope.as_deref().unwrap_or(".env").trim();
+            if !crate::env_vars::is_valid_scope(scope) {
+                return Err(format!("«{scope}» no es un nombre de fichero de entorno válido."));
+            }
+            let content = match request.content {
+                Some(c) => c,
+                None => {
+                    let root = trusted_project_root(&project)?;
+                    let path = root.join(scope);
+                    std::fs::read_to_string(&path)
+                        .map_err(|e| format!("No se pudo leer {}: {e}", path.display()))?
+                }
+            };
+            let parsed = crate::env_vars::parse_env_content(&content);
+            if parsed.is_empty() {
+                return Err("No se encontró ninguna variable con formato CLAVE=valor en ese contenido.".into());
+            }
+            let result = state.storage.import_env_vars(&project.id, scope, &parsed)?;
+            as_json(result)
+        })
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -726,6 +963,99 @@ fn trusted_project_root(project: &Project) -> Result<PathBuf, String> {
     if canonical != root { return Err("Operación bloqueada: la ruta canónica del proyecto cambió. Vuelve a registrar la carpeta para continuar.".into()); }
     if !canonical.is_dir() { return Err("Operación bloqueada: la ruta registrada no es una carpeta.".into()); }
     Ok(canonical)
+}
+
+fn resolve_project(storage: &Storage, id_or_path: &str) -> Result<Project, String> {
+    if let Ok(project) = storage.get_project(id_or_path) {
+        return Ok(project);
+    }
+    if let Ok(projects) = storage.list_projects() {
+        if let Some(found) = projects.into_iter().find(|p| {
+            p.id == id_or_path
+                || p.name.eq_ignore_ascii_case(id_or_path)
+                || p.path == id_or_path
+                || p.canonical_path == id_or_path
+        }) {
+            return Ok(found);
+        }
+    }
+    if let Ok(canonical) = std::fs::canonicalize(id_or_path) {
+        let canonical_str = canonical.to_string_lossy();
+        if let Ok(projects) = storage.list_projects() {
+            if let Some(found) = projects.into_iter().find(|p| p.canonical_path == canonical_str) {
+                return Ok(found);
+            }
+        }
+    }
+    Err(format!(
+        "No se encontró ningún proyecto con identificador, nombre o ruta «{id_or_path}»."
+    ))
+}
+
+fn write_scope_to_disk_with_backup(
+    storage: &Storage,
+    database_path: &Path,
+    project: &Project,
+    scope: &str,
+) -> Result<WriteEnvFileMcpResult, String> {
+    if !crate::env_vars::is_valid_scope(scope) {
+        return Err(format!("«{scope}» no es un nombre de fichero de entorno válido."));
+    }
+    let root = trusted_project_root(project)?;
+    let target = root.join(scope);
+    if target.parent() != Some(root.as_path()) {
+        return Err("Operación bloqueada: el fichero de entorno debe estar en la raíz del proyecto.".into());
+    }
+
+    let mut vars: Vec<EnvVar> = storage
+        .list_env_vars_for_project(&project.id)?
+        .into_iter()
+        .filter(|variable| variable.scope == scope)
+        .collect();
+    if vars.is_empty() {
+        return Err(format!("La bóveda no tiene ninguna variable en {scope}."));
+    }
+    vars.sort_by(|left, right| left.key.to_lowercase().cmp(&right.key.to_lowercase()));
+
+    let backup_path = if target.is_file() {
+        let base_data_dir = database_path.parent().unwrap_or(Path::new("."));
+        let backup_dir = base_data_dir.join("env-backups").join(&project.id);
+        std::fs::create_dir_all(&backup_dir)
+            .map_err(|e| format!("No se pudo crear el directorio de respaldos: {e}"))?;
+        let stamp = Utc::now().format("%Y%m%d-%H%M%S");
+        let backup = backup_dir.join(format!("{scope}.{stamp}{}", crate::env_vars::BACKUP_SUFFIX));
+        std::fs::copy(&target, &backup)
+            .map_err(|e| format!("No se pudo respaldar {}: {e}", target.display()))?;
+        Some(backup.to_string_lossy().to_string())
+    } else {
+        None
+    };
+
+    let mut content = format!(
+        "# Generado por Dev Command Center desde la bóveda de «{}».\n# {}\n\n",
+        project.name,
+        Utc::now().to_rfc3339()
+    );
+    content.push_str(&crate::env_vars::serialize_env_vars(&vars));
+    std::fs::write(&target, content)
+        .map_err(|e| format!("No se pudo escribir {}: {e}", target.display()))?;
+
+    Ok(WriteEnvFileMcpResult {
+        path: target.to_string_lossy().to_string(),
+        scope: scope.to_string(),
+        written_count: vars.len(),
+        backup_path,
+    })
+}
+
+fn mask_env_value(val: &str) -> String {
+    if val.is_empty() {
+        String::new()
+    } else if val.len() <= 6 {
+        "••••••••".to_string()
+    } else {
+        format!("{}••••{}", &val[..2], &val[val.len() - 2..])
+    }
 }
 
 fn command_available(program: &str, cwd: &Path) -> bool {
@@ -838,5 +1168,160 @@ mod tests {
         std::env::set_var("DEV_COMMAND_CENTER_DB", "relative.sqlite3");
         assert!(database_path_from_environment().is_err());
         match original { Some(value) => std::env::set_var("DEV_COMMAND_CENTER_DB", value), None => std::env::remove_var("DEV_COMMAND_CENTER_DB") }
+    }
+
+    fn test_server(dir: &Path) -> (DevCommandCenterMcp, Project) {
+        let db_path = dir.join("test.sqlite3");
+        let storage = Storage::open(&db_path).unwrap();
+        let proj_dir = dir.join("sample-project");
+        std::fs::create_dir_all(&proj_dir).unwrap();
+        let canonical_proj = std::fs::canonicalize(&proj_dir).unwrap();
+        let canonical_str = canonical_proj.to_string_lossy().to_string();
+        let project = Project {
+            id: "proj-1".into(),
+            name: "Sample App".into(),
+            path: canonical_str.clone(),
+            canonical_path: canonical_str,
+            project_type: "Node.js".into(),
+            frameworks: vec![],
+            package_manager: Some("pnpm".into()),
+            dev_command: Some("pnpm dev".into()),
+            build_command: None,
+            test_command: None,
+            local_url: None,
+            port: Some(3000),
+            status: ProjectStatus::Stopped,
+            last_used_at: None,
+            disk_size_bytes: 1024,
+            tags: vec![],
+            created_at: "2026-01-01T00:00:00Z".into(),
+            last_error: None,
+            is_pinned: false,
+            is_archived: false,
+            kind: crate::domain::ProjectKind::Service,
+        };
+        storage.insert_project(&project).unwrap();
+        let server = DevCommandCenterMcp {
+            tool_router: DevCommandCenterMcp::tool_router(),
+            state: Arc::new(Mutex::new(McpState {
+                storage,
+                database_path: db_path,
+                processes: McpProcessRegistry { processes: HashMap::new() },
+                cleanup_grants: HashMap::new(),
+            })),
+        };
+        (server, project)
+    }
+
+    #[test]
+    fn set_env_var_writes_to_disk_and_masks_secrets() {
+        let temp = tempfile::tempdir().unwrap();
+        let (server, project) = test_server(temp.path());
+
+        // Set secret variable by name resolution with write_to_disk = true
+        let resp = server.dev_command_center_set_env_var(Parameters(SetEnvVarMcpRequest {
+            project_id: "Sample App".into(),
+            key: "API_SECRET".into(),
+            value: "supersecret123".into(),
+            scope: None,
+            is_secret: None,
+            is_enabled: None,
+            comment: Some("Test secret".into()),
+            write_to_disk: Some(true),
+        })).unwrap();
+
+        assert!(resp.contains("\"written_to_disk\": true"));
+
+        // Verify disk file
+        let env_path = PathBuf::from(&project.canonical_path).join(".env");
+        assert!(env_path.exists());
+        let disk_content = std::fs::read_to_string(&env_path).unwrap();
+        assert!(disk_content.contains("API_SECRET=supersecret123"));
+
+        // List env vars without reveal
+        let list_masked = server.dev_command_center_list_env_vars(Parameters(ListEnvVarsMcpRequest {
+            project_id: project.id.clone(),
+            reveal_secrets: Some(false),
+        })).unwrap();
+        assert!(list_masked.contains("••••"));
+        assert!(!list_masked.contains("supersecret123"));
+
+        // List env vars with reveal
+        let list_revealed = server.dev_command_center_list_env_vars(Parameters(ListEnvVarsMcpRequest {
+            project_id: project.id.clone(),
+            reveal_secrets: Some(true),
+        })).unwrap();
+        assert!(list_revealed.contains("supersecret123"));
+    }
+
+    #[test]
+    fn write_env_file_creates_backup_on_overwrite() {
+        let temp = tempfile::tempdir().unwrap();
+        let (server, project) = test_server(temp.path());
+
+        // Write manual file to disk first
+        let env_path = PathBuf::from(&project.canonical_path).join(".env");
+        std::fs::write(&env_path, "PREVIOUS_KEY=prev_val\n").unwrap();
+
+        // Save var to vault without writing to disk
+        server.dev_command_center_set_env_var(Parameters(SetEnvVarMcpRequest {
+            project_id: project.id.clone(),
+            key: "NEW_KEY".into(),
+            value: "new_val".into(),
+            scope: None,
+            is_secret: None,
+            is_enabled: None,
+            comment: None,
+            write_to_disk: Some(false),
+        })).unwrap();
+
+        // Call write_env_file
+        let write_resp = server.dev_command_center_write_env_file(Parameters(WriteEnvFileMcpRequest {
+            project_id: project.id.clone(),
+            scope: Some(".env".into()),
+        })).unwrap();
+
+        assert!(write_resp.contains("backup_path"));
+        assert!(write_resp.contains(".env."));
+
+        // Check new disk content
+        let new_content = std::fs::read_to_string(&env_path).unwrap();
+        assert!(new_content.contains("NEW_KEY=new_val"));
+
+        // Check backup exists and contains previous content
+        let backup_dir = temp.path().join("env-backups").join(&project.id);
+        assert!(backup_dir.is_dir());
+        let mut entries = std::fs::read_dir(&backup_dir).unwrap();
+        let backup_entry = entries.next().unwrap().unwrap();
+        let backup_content = std::fs::read_to_string(backup_entry.path()).unwrap();
+        assert_eq!(backup_content, "PREVIOUS_KEY=prev_val\n");
+    }
+
+    #[test]
+    fn import_env_file_from_disk() {
+        let temp = tempfile::tempdir().unwrap();
+        let (server, project) = test_server(temp.path());
+
+        // Put a .env file on disk
+        let env_path = PathBuf::from(&project.canonical_path).join(".env");
+        std::fs::write(&env_path, "IMPORTED_KEY=imported_val\n").unwrap();
+
+        // Import by folder path
+        let import_resp = server.dev_command_center_import_env_file(Parameters(ImportEnvFileMcpRequest {
+            project_id: project.path.clone(),
+            scope: None,
+            content: None,
+        })).unwrap();
+
+        assert!(import_resp.contains("\"added\": 1"));
+
+        // Verify in vault
+        let list_resp = server.dev_command_center_list_env_vars(Parameters(ListEnvVarsMcpRequest {
+            project_id: project.id.clone(),
+            reveal_secrets: Some(true),
+        })).unwrap();
+
+        assert!(list_resp.contains("IMPORTED_KEY"));
+        assert!(list_resp.contains("imported_val"));
     }
 }
