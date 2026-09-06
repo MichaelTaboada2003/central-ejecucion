@@ -127,10 +127,10 @@ pnpm tauri dev
 # Compilación y chequeo de tipos TypeScript
 pnpm build
 
-# Ejecutar suite de pruebas unitarias en Rust (59 tests)
-cargo test --manifest-path src-tauri/Cargo.toml
+# Ejecutar suite de pruebas unitarias en Rust (64 tests)
+cargo test --manifest-path src-tauri/Cargo.toml --features mcp
 
-# Ejecutar suite de pruebas del frontend (121 tests)
+# Ejecutar suite de pruebas del frontend (124 tests)
 pnpm test
 
 # Generar binario de producción (.app y .dmg)
@@ -141,8 +141,14 @@ pnpm tauri build
 
 ## 🤖 Servidor MCP Local para Agentes de IA
 
-Dev Command Center incluye un servidor **MCP (Model Context Protocol)** integrado que permite a asistentes como **Antigravity IDE**, **Claude Desktop**, **Cursor** o **Codex** inspeccionar y controlar tus proyectos locales a través de `stdio`.
+Dev Command Center incluye un servidor **MCP (Model Context Protocol)** integrado que permite a asistentes como **Antigravity IDE**, **Claude Desktop**, **Cursor** o **Codex** inspeccionar y controlar tus proyectos locales a través de `stdio`:
 
-Consulta la documentación detallada en [`mcp/README.md`](mcp/README.md).
+- **Gestión de proyectos**: Listar, registrar, inspeccionar y re-escanear stacks.
+- **Ejecución supervisada**: Planificar comandos (dry-run), ejecutar tareas y controlar servidores `dev` en segundo plano.
+- **Bóveda y `.env` en disco**: Consultar variables, guardar secretos en la bóveda, sincronizarlos inmediatamente al `.env` en disco con respaldos automáticos e importar `.env` existentes.
+- **Git y Cloud Workspaces**: Clonar repositorios de GitHub, consultar estado y realizar *Safe Offload* para liberar espacio en disco.
+- **Limpieza de disco**: Generar reportes y previsualizaciones de limpieza con confirmación explícita.
+
+Consulta la documentación detallada y catálogo de herramientas en [`mcp/README.md`](mcp/README.md).
 
 ---

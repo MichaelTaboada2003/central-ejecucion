@@ -181,7 +181,44 @@ Detiene de forma segura el proceso de desarrollo en segundo plano iniciado por l
 #### `dev_command_center_get_process_logs`
 Obtiene las últimas líneas de log (`stdout` y `stderr`) del proceso en segundo plano administrado por la sesión.
 - **Parámetros**:
-  - `project_id` *(string, obligatorio)*: ID del proyecto.
+  - `project_id` *(string, obligatorio)*: ID, ruta o nombre del proyecto.
+
+---
+
+### 🔐 Variables de Entorno y Sincronización con Disco (`.env`)
+
+Todas las herramientas de variables de entorno aceptan en `project_id` tanto el **UUID**, como la **ruta del directorio** del proyecto (ej. `/Users/.../mi-proyecto`) o su **nombre visible**.
+
+#### `dev_command_center_set_env_var`
+Guarda o actualiza una variable en la bóveda SQLite del proyecto y, por omisión (`write_to_disk=true`), **la escribe y sincroniza inmediatamente en el archivo `.env` del disco** dentro de la raíz del proyecto.
+- **Parámetros**:
+  - `project_id` *(string, obligatorio)*: UUID, ruta o nombre del proyecto.
+  - `key` *(string, obligatorio)*: Nombre de la variable (ej. `DATABASE_URL`, `API_KEY`).
+  - `value` *(string, obligatorio)*: Valor de la variable.
+  - `scope` *(string, opcional)*: Ámbito o fichero destino (por omisión `".env"`). Soporta `.env.local`, `.env.production`, etc.
+  - `is_secret` *(boolean, opcional)*: Si debe tratarse como secreto (se auto-detecta si se omite).
+  - `is_enabled` *(boolean, opcional)*: Si la variable está activa para inyectarse al ejecutar (por omisión `true`).
+  - `comment` *(string, opcional)*: Comentario o nota explicativa.
+  - `write_to_disk` *(boolean, opcional)*: Si es `true` (por omisión), sincroniza inmediatamente el archivo `.env` en el disco.
+
+#### `dev_command_center_write_env_file`
+Vuelca todas las variables de la bóveda para un ámbito (por omisión `.env`) directamente al archivo en el disco del proyecto. Si el archivo ya existía, **genera automáticamente un respaldo con marca de tiempo** en `~/Library/Application Support/com.devcommandcenter.desktop/env-backups/<project_id>/` antes de sobreescribirlo.
+- **Parámetros**:
+  - `project_id` *(string, obligatorio)*: UUID, ruta o nombre del proyecto.
+  - `scope` *(string, opcional)*: Nombre del fichero de entorno (por omisión `".env"`).
+
+#### `dev_command_center_list_env_vars`
+Lista las variables guardadas en la bóveda para el proyecto (ocultando secretos por defecto con `••••`) y reporta en tiempo real los ficheros `.env` detectados en disco, estado de sincronización y claves desprotegidas en disco.
+- **Parámetros**:
+  - `project_id` *(string, obligatorio)*: UUID, ruta o nombre del proyecto.
+  - `reveal_secrets` *(boolean, opcional)*: Si es `true`, devuelve los valores de los secretos sin enmascarar (por omisión `false`).
+
+#### `dev_command_center_import_env_file`
+Lee un fichero `.env` del disco del proyecto (o un bloque de texto recibido) y fusiona sus variables dentro de la bóveda SQLite.
+- **Parámetros**:
+  - `project_id` *(string, obligatorio)*: UUID, ruta o nombre del proyecto.
+  - `scope` *(string, opcional)*: Fichero en la raíz del proyecto a leer (por omisión `".env"`).
+  - `content` *(string, opcional)*: Contenido `.env` en texto plano si se desea importar directamente sin leer el disco.
 
 ---
 
