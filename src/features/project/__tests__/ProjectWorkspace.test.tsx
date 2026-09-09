@@ -124,3 +124,49 @@ describe('ProjectWorkspace: puerto y URL solo donde tienen sentido', () => {
     expect(document.querySelector('.kind-badge')?.textContent).toContain('Servicio')
   })
 })
+
+describe('ProjectWorkspace: instalar dependencias no se confunde con estar en marcha', () => {
+  const instalando = {
+    process: { projectId: 'proj-1', pid: 4242, startedAt: '2026-01-01T10:00:00.000Z', command: 'pnpm install' },
+    recentCommands: [
+      {
+        id: 'cmd-install',
+        projectId: 'proj-1',
+        action: 'install',
+        command: 'pnpm install',
+        startedAt: '2026-01-01T10:00:00.000Z',
+        endedAt: null,
+        exitCode: null,
+        status: 'running' as const,
+        errorMessage: null,
+      },
+    ],
+  }
+
+  it('el estado dice qué está pasando en vez de heredar el «en ejecución» del backend', () => {
+    montar({ project: proyecto({ status: 'running' }), ...instalando })
+    // La píldora de la cabecera y el aviso de avance lo dicen a la vez.
+    expect(screen.getAllByText('Instalando dependencias').length).toBeGreaterThan(0)
+    const tira = document.querySelector('.status-strip')
+    expect(tira?.querySelector('.status-pill.instalando')).toBeTruthy()
+    expect(tira?.querySelector('.status-pill.running')).toBeNull()
+  })
+
+  it('desde otra pestaña el avance sigue a la vista y lleva a la suya', async () => {
+    const usuario = userEvent.setup()
+    const props = montar({
+      project: proyecto({ status: 'running' }),
+      scan: { ...detalle().scan, installedDependencies: false, declaredDependencies: 12 },
+      ...instalando,
+    })
+    // El aviso rojo de «faltan dependencias» sobra mientras se están instalando.
+    expect(screen.queryByText('Dependencias pendientes de instalación')).toBeNull()
+    await usuario.click(screen.getByRole('button', { name: /ver avance/i }))
+    expect(props.setTab).toHaveBeenCalledWith('dependencies')
+  })
+
+  it('no se arranca el servidor con el entorno a medio instalar', () => {
+    montar({ project: proyecto({ status: 'stopped' }), ...instalando })
+    expect(screen.getByRole('button', { name: /^run$/i })).toHaveProperty('disabled', true)
+  })
+})

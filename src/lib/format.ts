@@ -8,11 +8,45 @@ export function formatBytes(value: number): string {
   return `${(value / 1024 ** index).toFixed(index > 1 ? 1 : 0)} ${units[index]}`
 }
 
+/**
+ * Instante escrito por el backend. El inicio de un comando se guarda en RFC
+ * 3339 y su fin lo escribe SQLite con `datetime('now')`: mismo reloj (UTC)
+ * pero sin la zona, y el navegador lo leía como hora local. Una instalación de
+ * treinta segundos aparecía durando cinco horas.
+ */
+export function parseTimestamp(value: string | null | undefined): number | null {
+  if (!value) return null
+  const text = value.trim()
+  const normalized = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(text)
+    ? `${text.replace(' ', 'T')}Z`
+    : text
+  const parsed = Date.parse(normalized)
+  return Number.isNaN(parsed) ? null : parsed
+}
+
 export function formatDate(value: string): string {
-  const date = new Date(value)
-  return Number.isNaN(date.getTime())
+  const parsed = parseTimestamp(value)
+  return parsed === null
     ? '—'
-    : new Intl.DateTimeFormat('es-CO', { dateStyle: 'medium', timeStyle: 'short' }).format(date)
+    : new Intl.DateTimeFormat('es-CO', { dateStyle: 'medium', timeStyle: 'short' }).format(parsed)
+}
+
+/** Cronómetro de una tarea en curso: `01:12`, y con horas si las hubiera. */
+export function formatElapsed(milliseconds: number): string {
+  const total = Math.max(0, Math.round(milliseconds / 1000))
+  const seconds = String(total % 60).padStart(2, '0')
+  const minutes = Math.floor(total / 60)
+  if (minutes < 60) return `${String(minutes).padStart(2, '0')}:${seconds}`
+  return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}:${seconds}`
+}
+
+/** Duración en palabras para un resumen: «42 s», «3 min 12 s». */
+export function formatDurationText(milliseconds: number): string {
+  const seconds = Math.max(0, Math.round(milliseconds / 1000))
+  if (seconds < 60) return `${seconds} s`
+  const minutes = Math.floor(seconds / 60)
+  const rest = seconds % 60
+  return rest ? `${minutes} min ${rest} s` : `${minutes} min`
 }
 
 export function getStackClass(framework: string): string {
@@ -27,9 +61,9 @@ export function getStackClass(framework: string): string {
 
 /** Duración de una ejecución; para una en curso, lo que lleva hasta `now`. */
 export function commandDuration(command: CommandRecord, now: number = Date.now()): string | null {
-  const started = Date.parse(command.startedAt)
-  const ended = command.endedAt ? Date.parse(command.endedAt) : now
-  if (Number.isNaN(started) || Number.isNaN(ended) || ended < started) return null
+  const started = parseTimestamp(command.startedAt)
+  const ended = command.endedAt ? parseTimestamp(command.endedAt) : now
+  if (started === null || ended === null || ended < started) return null
   const seconds = Math.round((ended - started) / 1000)
   if (seconds < 60) return `${seconds}s`
   const minutes = Math.floor(seconds / 60)
@@ -59,8 +93,8 @@ export function describeCommandOutcome(command: CommandRecord, now: number = Dat
  * sigue vivo; «25/8/2026» obliga a restar mentalmente.
  */
 export function formatRelative(value: string, now: number = Date.now()): string {
-  const fecha = Date.parse(value)
-  if (Number.isNaN(fecha)) return '—'
+  const fecha = parseTimestamp(value)
+  if (fecha === null) return '—'
   const segundos = Math.round((now - fecha) / 1000)
   if (segundos < 0) return 'en el futuro'
   if (segundos < 60) return 'hace un momento'

@@ -174,9 +174,10 @@ export default function App() {
       })
       // `runProject` solo devuelve el proceso recién lanzado: la instalación aún
       // está corriendo. Anunciarla como terminada llevaba a intentar arrancar el
-      // servidor con las dependencias a medio instalar.
+      // servidor con las dependencias a medio instalar. El avance se sigue en la
+      // pestaña «Dependencias», y allí mismo se avisa cuando termina.
       if (actionName === 'install') {
-        notify('Instalación iniciada. Sigue su avance en «Procesos y logs»; al terminar se habilitará el servidor.', 'info')
+        notify('Instalación iniciada: el avance se ve en «Dependencias».', 'info')
       } else {
         notify(`Comando '${actionName}' iniciado con éxito.`)
       }

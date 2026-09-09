@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { commandDuration, describeCommandOutcome, formatBytes, formatDate, formatRelative, getStackClass } from '../format'
+import {
+  commandDuration,
+  describeCommandOutcome,
+  formatBytes,
+  formatDate,
+  formatDurationText,
+  formatElapsed,
+  formatRelative,
+  getStackClass,
+  parseTimestamp,
+} from '../format'
 import type { CommandRecord } from '../../types'
 
 function registro(overrides: Partial<CommandRecord>): CommandRecord {
@@ -112,5 +122,34 @@ describe('formatRelative', () => {
 
   it('un reloj adelantado no produce «hace -3 días»', () => {
     expect(formatRelative(new Date(ahora + 60_000).toISOString(), ahora)).toBe('en el futuro')
+  })
+})
+
+describe('marcas de tiempo del backend', () => {
+  it('el fin de un comando lo escribe SQLite en UTC pero sin zona', () => {
+    // Sin normalizar, el navegador lo leía como hora local y una instalación de
+    // 47 segundos aparecía durando las horas del huso.
+    expect(parseTimestamp('2026-01-01 10:00:47')).toBe(Date.parse('2026-01-01T10:00:47Z'))
+    expect(parseTimestamp('2026-01-01T10:00:47Z')).toBe(Date.parse('2026-01-01T10:00:47Z'))
+    expect(parseTimestamp('no es una fecha')).toBeNull()
+    expect(parseTimestamp(null)).toBeNull()
+  })
+
+  it('la duración de un comando terminado ya no depende del huso horario', () => {
+    expect(commandDuration(registro({ startedAt: '2026-01-01T10:00:00.000Z', endedAt: '2026-01-01 10:00:47' }))).toBe('47s')
+  })
+})
+
+describe('duraciones para pantalla', () => {
+  it('el cronómetro se lee de un vistazo y no salta de ancho', () => {
+    expect(formatElapsed(0)).toBe('00:00')
+    expect(formatElapsed(72_000)).toBe('01:12')
+    expect(formatElapsed(3_723_000)).toBe('1:02:03')
+  })
+
+  it('el resumen se escribe en palabras', () => {
+    expect(formatDurationText(42_000)).toBe('42 s')
+    expect(formatDurationText(72_000)).toBe('1 min 12 s')
+    expect(formatDurationText(120_000)).toBe('2 min')
   })
 })

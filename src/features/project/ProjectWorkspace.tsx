@@ -8,8 +8,11 @@ import type { Tab } from '../../hooks/useProjectDetail'
 import type { TerminalEntry } from '../../lib/logs'
 import type { DiskReport, GitHubRepo, Project, ProjectDetail } from '../../types'
 import { GitHubLogo } from '../../components/GitHubLogo'
+import { InstallStrip } from '../../components/InstallProgress'
 import { StatusPill } from '../../components/Status'
 import { useEnvVars } from '../../hooks/useEnvVars'
+import { useInstallActivity } from '../../hooks/useInstallActivity'
+import { formatDurationText } from '../../lib/format'
 import { ConfigurationTab } from './tabs/ConfigurationTab'
 import { DependenciesTab } from './tabs/DependenciesTab'
 import { EnvironmentTab } from './tabs/EnvironmentTab'
@@ -87,6 +90,24 @@ export function ProjectWorkspace({
   // insignia de «claves sin proteger» tiene que poder avisar antes de que nadie
   // entre a mirar.
   const env = useEnvVars({ projectId: project.id, notify: onNotify })
+  // La instalación es un proceso largo lanzado a espaldas de la interfaz: el
+  // panel la sigue a partir del historial y de la salida del gestor, y avisa
+  // cuando termina en vez de dejar que la pantalla cambie sola.
+  const install = useInstallActivity({
+    detail,
+    logs,
+    onFinish: outcome => {
+      if (outcome.cancelled) {
+        onNotify('Instalación cancelada: el entorno quedó a medias.', 'info')
+      } else if (outcome.ok) {
+        const cuantos = outcome.packages ? `${outcome.packages} paquetes · ` : ''
+        const cuanto = outcome.durationMs !== null ? formatDurationText(outcome.durationMs) : ''
+        onNotify(`Dependencias instaladas. ${cuantos}${cuanto}`.trim(), 'success')
+      } else {
+        onNotify(outcome.message || 'La instalación falló. Revisa la salida del gestor.', 'error')
+      }
+    },
+  })
   const isRunning = project.status === 'running'
   const isMissingDeps = !scan.installedDependencies && scan.declaredDependencies > 0
   const kind = projectKind(project)
@@ -249,9 +270,9 @@ export function ProjectWorkspace({
           ) : primaryAction ? (
             <button
               className="primary"
-              disabled={!!busy}
+              disabled={!!busy || install.running}
               onClick={() => void onRun(primaryAction.action, primaryAction.script)}
-              title={primaryAction.title}
+              title={install.running ? 'Espera a que terminen de instalarse las dependencias' : primaryAction.title}
             >
               {busy?.startsWith('run:') ? (
                 <LoaderCircle size={16} className="spin" />
@@ -269,6 +290,13 @@ export function ProjectWorkspace({
         {kind === 'script' || kind === 'inert' ? (
           <span className="estado-no-ejecutable" title={kindMeta[kind].hint}>
             {kindMeta[kind].label}
+          </span>
+        ) : install.running ? (
+          // El backend marca «en ejecución» cualquier proceso administrado, así
+          // que instalar dependencias hacía creer que el servidor ya estaba en pie.
+          <span className="status-pill instalando" title="Se están instalando las dependencias del proyecto">
+            <LoaderCircle size={11} className="spin" />
+            Instalando dependencias
           </span>
         ) : (
           <StatusPill status={project.status} />
@@ -293,7 +321,11 @@ export function ProjectWorkspace({
         <span>Última actividad: {formatDate(project.lastUsedAt || project.createdAt)}</span>
       </div>
 
-      {isMissingDeps && !isRunning && (
+      {install.running && tab !== 'dependencies' && (
+        <InstallStrip activity={install} onOpen={() => setTab('dependencies')} />
+      )}
+
+      {isMissingDeps && !isRunning && !install.running && (
         <div
           className="card"
           style={{
@@ -389,7 +421,16 @@ export function ProjectWorkspace({
           onNotify={onNotify}
         />
       )}
-{tab === 'dependencies' && <DependenciesTab scan={scan} onRun={onRun} busy={busy} />}
+      {tab === 'dependencies' && (
+        <DependenciesTab
+          scan={scan}
+          onRun={onRun}
+          busy={busy}
+          install={install}
+          onCancelInstall={onStop}
+          onOpenLogs={tabsVisibles.some(t => t.id === 'processes') ? () => setTab('processes') : undefined}
+        />
+      )}
       {tab === 'disk' && (
         <DiskTab disk={disk} onLoad={onDisk} onPreviewCleanup={onPreviewCleanup} busy={busy} />
       )}

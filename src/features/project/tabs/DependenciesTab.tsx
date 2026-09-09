@@ -3,15 +3,25 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { normalizeSearchText } from '../../../lib/projects'
 import type { ProjectDetail } from '../../../types'
 import { Meta } from '../../../components/Primitives'
+import { InstallOutcomeCard, InstallProgressPanel } from '../../../components/InstallProgress'
+import { IDLE_INSTALL_ACTIVITY, type InstallActivity } from '../../../hooks/useInstallActivity'
 
 export function DependenciesTab({
   scan,
   onRun,
   busy,
+  install = IDLE_INSTALL_ACTIVITY,
+  onCancelInstall,
+  onOpenLogs,
 }: {
   scan: ProjectDetail['scan']
   onRun: (action: 'install') => Promise<void> | undefined
   busy: string | null
+  /** Instalación en curso, si la hay. Se dibuja aquí porque es aquí donde se
+   *  lanza: mandar al usuario a otra pestaña a ver si avanza no es seguirla. */
+  install?: InstallActivity
+  onCancelInstall?: () => void
+  onOpenLogs?: () => void
 }) {
   const [search, setSearch] = useState('')
   const [filterType, setFilterType] = useState<'all' | 'prod' | 'dev'>('all')
@@ -46,6 +56,18 @@ export function DependenciesTab({
   }
 
   const estadoEntorno = useMemo(() => {
+    // Mientras se instala, el diagnóstico de siempre miente: dice que falta el
+    // entorno justo cuando se está creando. Y en vez de repetir lo que ya dice
+    // el panel de arriba, nombra el directorio que está apareciendo.
+    if (install.running) {
+      const destino = scan.environmentDir || scan.missingEnvironment?.[0]
+      return {
+        tono: 'trabajando' as const,
+        texto: destino
+          ? `Creando «${destino}» con las ${scan.declaredDependencies} dependencias declaradas…`
+          : 'Resolviendo las dependencias declaradas del proyecto…',
+      }
+    }
     if (scan.declaredDependencies === 0) {
       return { tono: 'neutro' as const, texto: 'Este proyecto no declara dependencias.' }
     }
@@ -59,7 +81,7 @@ export function DependenciesTab({
     }
     const faltan = scan.missingEnvironment?.length ? scan.missingEnvironment.join(' y ') : 'el entorno'
     return { tono: 'warn' as const, texto: `Falta ${faltan}: las dependencias declaradas todavía no están instaladas.` }
-  }, [scan.declaredDependencies, scan.installedDependencies, scan.environmentDir, scan.missingEnvironment])
+  }, [install.running, scan.declaredDependencies, scan.installedDependencies, scan.environmentDir, scan.missingEnvironment])
 
   return (
     <div className="detail-grid">
@@ -72,25 +94,46 @@ export function DependenciesTab({
           <button
             className="primary"
             onClick={() => void onRun('install')}
-            disabled={!!busy || scan.declaredDependencies === 0 || !scan.packageManager}
+            disabled={!!busy || install.running || scan.declaredDependencies === 0 || !scan.packageManager}
             title={
-              scan.declaredDependencies === 0
-                ? 'Este proyecto no declara dependencias'
-                : !scan.packageManager
-                  ? 'No se detectó un gestor de paquetes con el que instalar'
-                  : scan.installedDependencies
-                    ? 'Reinstalar o sincronizar dependencias'
-                    : 'Instalar dependencias del proyecto'
+              install.running
+                ? 'La instalación ya está en marcha'
+                : scan.declaredDependencies === 0
+                  ? 'Este proyecto no declara dependencias'
+                  : !scan.packageManager
+                    ? 'No se detectó un gestor de paquetes con el que instalar'
+                    : scan.installedDependencies
+                      ? 'Reinstalar o sincronizar dependencias'
+                      : 'Instalar dependencias del proyecto'
             }
           >
-            {busy === 'run:install' ? (
+            {/* El spinner acompañaba solo a la llamada que lanza el proceso, que
+                dura milisegundos: la espera de verdad empieza justo después. */}
+            {busy === 'run:install' || install.running ? (
               <LoaderCircle size={15} className="spin" />
             ) : (
               <PackageOpen size={15} />
             )}
-            Instalar dependencias
+            {install.running ? 'Instalando…' : 'Instalar dependencias'}
           </button>
         </div>
+
+        {install.running && (
+          <InstallProgressPanel
+            activity={install}
+            onCancel={onCancelInstall}
+            onOpenLogs={onOpenLogs}
+            cancelling={busy === 'stop'}
+          />
+        )}
+        {!install.running && install.outcome && (
+          <InstallOutcomeCard
+            outcome={install.outcome}
+            onDismiss={install.dismissOutcome}
+            onOpenLogs={onOpenLogs}
+            onRetry={() => void onRun('install')}
+          />
+        )}
 
         <div className="dependency-status">
           {/* Tres estados, no dos: «no declara nada» no es lo mismo que «está
@@ -101,6 +144,8 @@ export function DependenciesTab({
               <Check size={18} />
             ) : estadoEntorno.tono === 'warn' ? (
               <AlertTriangle size={18} />
+            ) : estadoEntorno.tono === 'trabajando' ? (
+              <LoaderCircle size={18} className="spin" />
             ) : (
               <PackageOpen size={18} />
             )}
