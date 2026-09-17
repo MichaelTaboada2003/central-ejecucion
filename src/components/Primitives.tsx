@@ -1,6 +1,7 @@
 import { Check, Copy, FolderOpen, LoaderCircle, Plus, RotateCcw, Search } from 'lucide-react'
 import { ReactNode, useEffect, useRef, useState } from 'react'
 import type { ProjectStatus } from '../types'
+import { copyText } from '../lib/clipboard'
 
 export function StatCard({
   label,
@@ -54,7 +55,7 @@ export function CopyButton({ value, onCopy }: { value: string; onCopy?: () => vo
   const timer = useRef<number | undefined>(undefined)
   useEffect(() => () => window.clearTimeout(timer.current), [])
   const handleCopy = () => {
-    void navigator.clipboard.writeText(value)
+    void copyText(value)
     setCopied(true)
     onCopy?.()
     window.clearTimeout(timer.current)

@@ -5121,6 +5121,53 @@ button.github-link-pill {
 
 /* ------------------------------------------------------ variables huérfanas */
 
+/* La cabecera del grupo es el disparador del plegado: ocupa todo el ancho que
+   le dejan las acciones, para que el área de clic sea la fila entera y no solo
+   el chevron. */
+.group-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.group-toggle > svg {
+  flex-shrink: 0;
+  margin-top: 3px;
+  color: var(--text-tertiary);
+  transition: color 120ms ease;
+}
+
+.group-toggle:hover > svg {
+  color: var(--text-primary);
+}
+
+.group-toggle > div {
+  min-width: 0;
+}
+
+/* El recuento va en la cabecera porque un grupo plegado tiene que seguir
+   diciendo cuánto guarda: es lo que permite decidir si merece abrirlo. */
+.group-count {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
+  background: var(--bg-surface-2, rgba(255, 255, 255, 0.04));
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
 .orphan-group .card-heading h2 {
   display: flex;
   align-items: center;

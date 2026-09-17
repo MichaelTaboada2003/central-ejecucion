@@ -5,6 +5,7 @@ import type { TerminalEntry } from '../../../lib/logs'
 import type { ProcessInfo, Project } from '../../../types'
 import { TerminalLine } from '../../../components/TerminalLine'
 import { Meta } from '../../../components/Primitives'
+import { copyText } from '../../../lib/clipboard'
 
 export function ProcessesTab({
   project,
@@ -44,7 +45,7 @@ export function ProcessesTab({
 
   const copyAllLogs = () => {
     const text = logs.map(l => `[${l.timestamp}] [${l.stream}] ${l.line}`).join('\n')
-    void navigator.clipboard.writeText(text)
+    void copyText(text)
     onNotify('Logs copiados al portapapeles', 'success')
   }
 

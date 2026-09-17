@@ -1,5 +1,7 @@
 import {
   ArchiveRestore,
+  ChevronDown,
+  ChevronRight,
   Copy,
   Eye,
   EyeOff,
@@ -54,6 +56,11 @@ export function EnvVaultView({
   onCopy: (ids: string[]) => void
 }) {
   const [revealed, setRevealed] = useState<Set<string>>(new Set())
+  // Plegados por omisión: con varios proyectos la vista era un muro de claves y
+  // había que desplazarse para saber siquiera qué proyectos hay. La cabecera de
+  // cada grupo ya dice cuántas variables guarda, así que cerrado sigue
+  // informando.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [restoring, setRestoring] = useState<{ origin: string; projectId: string; scope: string } | null>(null)
   const [discarding, setDiscarding] = useState<string | null>(null)
 
@@ -70,6 +77,23 @@ export function EnvVaultView({
   const orphanGroups = useMemo(() => groupByOrigin(orphans), [orphans])
 
   const total = snapshot?.total ?? 0
+  const groupKeys = useMemo(
+    () => [
+      ...liveGroups.map(group => `proyecto:${group.projectId}`),
+      ...orphanGroups.map(group => `huerfanas:${group.origin}`),
+    ],
+    [liveGroups, orphanGroups]
+  )
+  const allExpanded = groupKeys.length > 0 && groupKeys.every(key => expanded.has(key))
+
+  const toggleGroup = (key: string) =>
+    setExpanded(current => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+
   const toggleReveal = (id: string) =>
     setRevealed(current => {
       const next = new Set(current)
@@ -126,6 +150,16 @@ export function EnvVaultView({
           <strong>Bóveda de entorno</strong>
         </div>
         <div className="header-actions">
+          {groupKeys.length > 1 && (
+            <button
+              className="secondary"
+              onClick={() => setExpanded(allExpanded ? new Set() : new Set(groupKeys))}
+              title={allExpanded ? 'Plegar todos los grupos' : 'Desplegar todos los grupos'}
+            >
+              {allExpanded ? <ChevronRight size={15} /> : <ChevronDown size={15} />}{' '}
+              {allExpanded ? 'Contraer todo' : 'Expandir todo'}
+            </button>
+          )}
           <button
             className="secondary"
             onClick={() => onLoad(false)}
@@ -176,19 +210,33 @@ export function EnvVaultView({
           <>
             {liveGroups.map(group => {
               const ids = group.vars.map(variable => variable.id)
+              const key = `proyecto:${group.projectId}`
+              const abierto = expanded.has(key)
               return (
                 <section key={group.projectId} className="card span-two orphan-group">
                   <div className="card-heading">
-                    <div>
-                      <p className="eyebrow">{group.available ? 'PROYECTO' : 'CARPETA NO DISPONIBLE'}</p>
-                      <h2>
-                        {group.available ? <FolderOpen size={18} /> : <FolderX size={18} />} {group.projectName}
-                      </h2>
-                      <p>
-                        {group.projectPath ? <code>{group.projectPath}</code> : 'Ruta desconocida'}
-                        {group.secretCount ? ` · ${group.secretCount} tratadas como secreto` : ''}
-                      </p>
-                    </div>
+                    <button
+                      type="button"
+                      className="group-toggle"
+                      onClick={() => toggleGroup(key)}
+                      aria-expanded={abierto}
+                      title={abierto ? 'Plegar este proyecto' : 'Desplegar este proyecto'}
+                    >
+                      {abierto ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                      <div>
+                        <p className="eyebrow">{group.available ? 'PROYECTO' : 'CARPETA NO DISPONIBLE'}</p>
+                        <h2>
+                          {group.available ? <FolderOpen size={18} /> : <FolderX size={18} />} {group.projectName}
+                          <span className="group-count">
+                            {group.vars.length} {group.vars.length === 1 ? 'variable' : 'variables'}
+                          </span>
+                        </h2>
+                        <p>
+                          {group.projectPath ? <code>{group.projectPath}</code> : 'Ruta desconocida'}
+                          {group.secretCount ? ` · ${group.secretCount} tratadas como secreto` : ''}
+                        </p>
+                      </div>
+                    </button>
                     <div className="env-heading-actions">
                       <button className="secondary" onClick={() => onCopy(ids)} disabled={!!busy}>
                         <Copy size={15} /> Copiar como .env
@@ -198,7 +246,9 @@ export function EnvVaultView({
                   {/* Sin borrado en bloque: las variables de un proyecto vivo se
                       gestionan en su pestaña «Entorno», que además avisa de lo
                       que quedaría desincronizado con el disco. */}
-                  <div className="env-var-list">{group.vars.map(variable => varRow(variable, false))}</div>
+                  {abierto && (
+                    <div className="env-var-list">{group.vars.map(variable => varRow(variable, false))}</div>
+                  )}
                 </section>
               )
             })}
@@ -207,19 +257,33 @@ export function EnvVaultView({
               const ids = group.vars.map(variable => variable.id)
               const isRestoring = restoring?.origin === group.origin
               const isDiscarding = discarding === group.origin
+              const key = `huerfanas:${group.origin}`
+              const abierto = expanded.has(key)
               return (
                 <section key={`orphan:${group.origin}`} className="card span-two orphan-group">
                   <div className="card-heading">
-                    <div>
-                      <p className="eyebrow">PROYECTO BORRADO</p>
-                      <h2>
-                        <FolderX size={18} /> {group.origin}
-                      </h2>
-                      <p>
-                        {group.path ? <code>{group.path}</code> : 'Ruta original desconocida'}
-                        {group.orphanedAt ? ` · huérfanas desde ${formatDate(group.orphanedAt)}` : ''}
-                      </p>
-                    </div>
+                    <button
+                      type="button"
+                      className="group-toggle"
+                      onClick={() => toggleGroup(key)}
+                      aria-expanded={abierto}
+                      title={abierto ? 'Plegar este grupo' : 'Desplegar este grupo'}
+                    >
+                      {abierto ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                      <div>
+                        <p className="eyebrow">PROYECTO BORRADO</p>
+                        <h2>
+                          <FolderX size={18} /> {group.origin}
+                          <span className="group-count">
+                            {group.vars.length} {group.vars.length === 1 ? 'variable' : 'variables'}
+                          </span>
+                        </h2>
+                        <p>
+                          {group.path ? <code>{group.path}</code> : 'Ruta original desconocida'}
+                          {group.orphanedAt ? ` · huérfanas desde ${formatDate(group.orphanedAt)}` : ''}
+                        </p>
+                      </div>
+                    </button>
                     <div className="env-heading-actions">
                       <button className="secondary" onClick={() => onCopy(ids)} disabled={!!busy}>
                         <Copy size={15} /> Copiar como .env
@@ -327,7 +391,9 @@ export function EnvVaultView({
                     </div>
                   )}
 
-                  <div className="env-var-list">{group.vars.map(variable => varRow(variable, true))}</div>
+                  {abierto && (
+                    <div className="env-var-list">{group.vars.map(variable => varRow(variable, true))}</div>
+                  )}
                 </section>
               )
             })}

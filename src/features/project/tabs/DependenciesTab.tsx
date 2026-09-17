@@ -5,6 +5,7 @@ import type { ProjectDetail } from '../../../types'
 import { Meta } from '../../../components/Primitives'
 import { InstallOutcomeCard, InstallProgressPanel } from '../../../components/InstallProgress'
 import { IDLE_INSTALL_ACTIVITY, type InstallActivity } from '../../../hooks/useInstallActivity'
+import { copyText } from '../../../lib/clipboard'
 
 export function DependenciesTab({
   scan,
@@ -49,7 +50,7 @@ export function DependenciesTab({
   const copyTimer = useRef<number | undefined>(undefined)
   useEffect(() => () => window.clearTimeout(copyTimer.current), [])
   const copyDep = (name: string) => {
-    void navigator.clipboard.writeText(name)
+    void copyText(name)
     setCopiedDep(name)
     window.clearTimeout(copyTimer.current)
     copyTimer.current = window.setTimeout(() => setCopiedDep(null), 1500)

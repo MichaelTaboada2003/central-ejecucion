@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api'
+import { copyText } from '../lib/clipboard'
 import type { ProjectEnvVars, SaveEnvVarRequest } from '../types'
 import type { NoticeKind } from './useNotices'
 
@@ -111,7 +112,7 @@ export function useEnvVars({ projectId, notify }: Options) {
       if (!projectId) return
       try {
         const text = await api.exportEnvVars(projectId, ids)
-        await navigator.clipboard.writeText(text)
+        await copyText(text)
         notifyRef.current(ids?.length ? `${ids.length} variables copiadas` : 'Bóveda copiada al portapapeles', 'success')
       } catch (error) {
         notifyRef.current(error instanceof Error ? error.message : String(error), 'error')

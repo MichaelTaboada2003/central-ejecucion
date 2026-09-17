@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
+import { copyText } from '../lib/clipboard'
 import type { AdoptEnvVarsRequest, EnvVar, EnvVaultSnapshot } from '../types'
 import type { NoticeKind } from './useNotices'
 
@@ -101,7 +102,7 @@ export function useEnvVault(notify: (text: string, kind: NoticeKind) => void) {
   const copyAsEnv = useCallback(
     async (ids: string[]) => {
       try {
-        await navigator.clipboard.writeText(await api.exportEnvVars(null, ids))
+        await copyText(await api.exportEnvVars(null, ids))
         notify(`${ids.length} ${ids.length === 1 ? 'variable copiada' : 'variables copiadas'} al portapapeles`, 'success')
       } catch (error) {
         notify(error instanceof Error ? error.message : String(error), 'error')

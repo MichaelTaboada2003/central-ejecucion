@@ -24,6 +24,7 @@ import { countParsableVars, groupByScope, looksLikeSecret, maskValue, syncState 
 import { formatBytes } from '../../../lib/format'
 import type { EnvFileInfo, EnvVar, ProjectEnvVars } from '../../../types'
 import { LoadingInline } from '../../../components/Primitives'
+import { copyText } from '../../../lib/clipboard'
 
 /** Formulario de alta o edición. `id` ausente significa que es nueva. */
 interface Draft {
@@ -452,7 +453,7 @@ function VarRow({
   const hidden = variable.isSecret && !revealed
 
   const copy = () => {
-    void navigator.clipboard.writeText(variable.value)
+    void copyText(variable.value)
     setCopied(true)
     window.setTimeout(() => setCopied(false), 1500)
   }
