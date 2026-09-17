@@ -150,6 +150,7 @@ pub fn run() {
             commands::env_vars::write_env_file,
             commands::env_vars::list_env_vault,
             commands::env_vars::list_orphan_env_vars,
+            commands::env_vars::count_env_vars,
             commands::env_vars::count_orphan_env_vars,
             commands::env_vars::adopt_env_vars,
             commands::env_vars::export_env_vars,

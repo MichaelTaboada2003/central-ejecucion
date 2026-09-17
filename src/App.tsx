@@ -423,21 +423,26 @@ export default function App() {
               </span>
             ) : null}
           </button>
-          {/* La bóveda solo aparece cuando hay algo que rescatar: un apartado
-              permanentemente vacío es ruido en la barra lateral. */}
-          {vault.count > 0 && (
+          {/* La bóveda aparece cuando hay algo guardado: un apartado
+              permanentemente vacío es ruido en la barra lateral, pero atarlo al
+              recuento de huérfanas dejaba la vista global inalcanzable para
+              quien no hubiera borrado nunca un proyecto. La insignia sigue
+              contando solo las huérfanas, que son las que piden atención. */}
+          {vault.totalCount > 0 && (
             <button
               className={viewMode === 'vault' && !selectedId ? 'nav-item active' : 'nav-item'}
               onClick={() => {
                 setSelectedId(null)
                 setViewMode('vault')
               }}
-              title="Variables de entorno de proyectos ya borrados"
+              title="Todas las variables de entorno guardadas, por proyecto"
             >
               <KeyRound size={16} /> Bóveda de entorno
-              <span className="badge-count" style={{ marginLeft: 'auto', fontSize: 11, background: 'var(--accent-amber-subtle)', padding: '2px 7px', borderRadius: 10, color: 'var(--accent-amber)' }}>
-                {vault.count}
-              </span>
+              {vault.count > 0 && (
+                <span className="badge-count" style={{ marginLeft: 'auto', fontSize: 11, background: 'var(--accent-amber-subtle)', padding: '2px 7px', borderRadius: 10, color: 'var(--accent-amber)' }}>
+                  {vault.count}
+                </span>
+              )}
             </button>
           )}
         </nav>
@@ -874,7 +879,7 @@ export default function App() {
             setModal(null)
           }}
           onVault={
-            vault.count > 0
+            vault.totalCount > 0
               ? () => {
                   setSelectedId(null)
                   setViewMode('vault')

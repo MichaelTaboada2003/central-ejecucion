@@ -287,6 +287,11 @@ pub fn list_orphan_env_vars(state: tauri::State<'_, AppState>) -> Result<Vec<Env
 }
 
 #[tauri::command(async)]
+pub fn count_env_vars(state: tauri::State<'_, AppState>) -> Result<usize, String> {
+    state.with_storage(|db| db.count_env_vars())
+}
+
+#[tauri::command(async)]
 pub fn count_orphan_env_vars(state: tauri::State<'_, AppState>) -> Result<usize, String> {
     state.with_storage(|db| db.count_orphan_env_vars())
 }

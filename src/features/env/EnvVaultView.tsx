@@ -23,16 +23,16 @@ import { LoadingInline } from '../../components/Primitives'
 /**
  * Bóveda de entorno: todo lo guardado, de todos los proyectos.
  *
- * Los proyectos vivos van primero y son de solo lectura aquí —editar se hace en
- * la pestaña «Entorno» del proyecto, que es la que sabe de ficheros y de
- * sincronía con el disco—. Esta vista responde a otra pregunta: «¿dónde guardé
- * aquella clave?», y hasta ahora no había forma de contestarla sin abrir los
- * proyectos uno a uno.
+ * La vista responde a «¿dónde guardé aquella clave?», que antes obligaba a abrir
+ * los proyectos uno a uno. Los proyectos vivos son de solo lectura aquí —editar
+ * se hace en la pestaña «Entorno» del proyecto, que es la que sabe de ficheros y
+ * de sincronía con el disco—; las huérfanas, agrupadas por el proyecto del que
+ * venían, se restauran o se descartan.
  *
- * Después van las huérfanas, agrupadas por el proyecto del que venían. Existen
- * porque borrar un proyecto hace `remove_dir_all` de su carpeta y sus `.env`
- * están en el `.gitignore`: sin este rescate, esas credenciales no estarían en
- * ningún sitio.
+ * El formato es el mismo que usa el resto del panel para listas largas: una
+ * tarjeta por sección y filas compactas dentro. Una tarjeta por grupo dejaba, al
+ * estar plegada, 44px de relleno alrededor de un título y convertía diez
+ * proyectos en diez bloques casi vacíos.
  */
 export function EnvVaultView({
   snapshot,
@@ -56,13 +56,11 @@ export function EnvVaultView({
   onCopy: (ids: string[]) => void
 }) {
   const [revealed, setRevealed] = useState<Set<string>>(new Set())
-  // Plegados por omisión: con varios proyectos la vista era un muro de claves y
-  // había que desplazarse para saber siquiera qué proyectos hay. La cabecera de
-  // cada grupo ya dice cuántas variables guarda, así que cerrado sigue
-  // informando.
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [restoring, setRestoring] = useState<{ origin: string; projectId: string; scope: string } | null>(null)
   const [discarding, setDiscarding] = useState<string | null>(null)
+  // Plegados por omisión: la fila de cada grupo ya dice cuántas variables
+  // guarda, que es lo que hace falta para decidir si merece abrirlo.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     onLoad()
@@ -142,6 +140,42 @@ export function EnvVaultView({
     )
   }
 
+  /** Cabecera plegable común a los dos tipos de grupo. */
+  const groupHeader = (
+    key: string,
+    icon: React.ReactNode,
+    name: string,
+    detail: string,
+    count: number,
+    actions: React.ReactNode
+  ) => {
+    const abierto = expanded.has(key)
+    return (
+      <div className="vault-group-row">
+        <button
+          type="button"
+          className="vault-group-toggle"
+          onClick={() => toggleGroup(key)}
+          aria-expanded={abierto}
+          title={abierto ? `Plegar ${name}` : `Desplegar ${name}`}
+        >
+          {abierto ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+          <span className="vault-group-id">
+            {icon}
+            <span>
+              <strong>{name}</strong>
+              <small title={detail}>{detail}</small>
+            </span>
+          </span>
+        </button>
+        <span className="vault-group-count">
+          {count} {count === 1 ? 'variable' : 'variables'}
+        </span>
+        <div className="vault-group-actions">{actions}</div>
+      </div>
+    )
+  }
+
   return (
     <>
       <div className="project-header">
@@ -208,195 +242,224 @@ export function EnvVaultView({
           </div>
         ) : (
           <>
-            {liveGroups.map(group => {
-              const ids = group.vars.map(variable => variable.id)
-              const key = `proyecto:${group.projectId}`
-              const abierto = expanded.has(key)
-              return (
-                <section key={group.projectId} className="card span-two orphan-group">
-                  <div className="card-heading">
-                    <button
-                      type="button"
-                      className="group-toggle"
-                      onClick={() => toggleGroup(key)}
-                      aria-expanded={abierto}
-                      title={abierto ? 'Plegar este proyecto' : 'Desplegar este proyecto'}
-                    >
-                      {abierto ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                      <div>
-                        <p className="eyebrow">{group.available ? 'PROYECTO' : 'CARPETA NO DISPONIBLE'}</p>
-                        <h2>
-                          {group.available ? <FolderOpen size={18} /> : <FolderX size={18} />} {group.projectName}
-                          <span className="group-count">
-                            {group.vars.length} {group.vars.length === 1 ? 'variable' : 'variables'}
-                          </span>
-                        </h2>
-                        <p>
-                          {group.projectPath ? <code>{group.projectPath}</code> : 'Ruta desconocida'}
-                          {group.secretCount ? ` · ${group.secretCount} tratadas como secreto` : ''}
-                        </p>
-                      </div>
-                    </button>
-                    <div className="env-heading-actions">
-                      <button className="secondary" onClick={() => onCopy(ids)} disabled={!!busy}>
-                        <Copy size={15} /> Copiar como .env
-                      </button>
-                    </div>
+            {liveGroups.length > 0 && (
+              <section className="card span-two">
+                <div className="card-heading">
+                  <div>
+                    <p className="eyebrow">PROYECTOS REGISTRADOS</p>
+                    <h2>Variables por proyecto</h2>
+                    <p>Solo lectura: se editan en la pestaña «Entorno» de cada proyecto.</p>
                   </div>
-                  {/* Sin borrado en bloque: las variables de un proyecto vivo se
-                      gestionan en su pestaña «Entorno», que además avisa de lo
-                      que quedaría desincronizado con el disco. */}
-                  {abierto && (
-                    <div className="env-var-list">{group.vars.map(variable => varRow(variable, false))}</div>
-                  )}
-                </section>
-              )
-            })}
-
-            {orphanGroups.map(group => {
-              const ids = group.vars.map(variable => variable.id)
-              const isRestoring = restoring?.origin === group.origin
-              const isDiscarding = discarding === group.origin
-              const key = `huerfanas:${group.origin}`
-              const abierto = expanded.has(key)
-              return (
-                <section key={`orphan:${group.origin}`} className="card span-two orphan-group">
-                  <div className="card-heading">
-                    <button
-                      type="button"
-                      className="group-toggle"
-                      onClick={() => toggleGroup(key)}
-                      aria-expanded={abierto}
-                      title={abierto ? 'Plegar este grupo' : 'Desplegar este grupo'}
-                    >
-                      {abierto ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                      <div>
-                        <p className="eyebrow">PROYECTO BORRADO</p>
-                        <h2>
-                          <FolderX size={18} /> {group.origin}
-                          <span className="group-count">
-                            {group.vars.length} {group.vars.length === 1 ? 'variable' : 'variables'}
-                          </span>
-                        </h2>
-                        <p>
-                          {group.path ? <code>{group.path}</code> : 'Ruta original desconocida'}
-                          {group.orphanedAt ? ` · huérfanas desde ${formatDate(group.orphanedAt)}` : ''}
-                        </p>
+                </div>
+                <div className="vault-list">
+                  {liveGroups.map(group => {
+                    const ids = group.vars.map(variable => variable.id)
+                    const key = `proyecto:${group.projectId}`
+                    const abierto = expanded.has(key)
+                    return (
+                      <div key={group.projectId} className={`vault-group ${abierto ? 'open' : ''}`}>
+                        {groupHeader(
+                          key,
+                          group.available ? <FolderOpen size={15} /> : <FolderX size={15} />,
+                          group.projectName,
+                          [
+                            group.projectPath ?? 'Ruta desconocida',
+                            group.available ? null : 'carpeta no disponible',
+                            group.secretCount ? `${group.secretCount} secretas` : null,
+                          ]
+                            .filter(Boolean)
+                            .join(' · '),
+                          group.vars.length,
+                          <button className="secondary" onClick={() => onCopy(ids)} disabled={!!busy}>
+                            <Copy size={14} /> Copiar .env
+                          </button>
+                        )}
+                        {/* Sin borrado en bloque: eso se gestiona en la pestaña
+                            del proyecto, que avisa de lo que quedaría
+                            desincronizado con el disco. */}
+                        {abierto && (
+                          <div className="vault-group-body">
+                            <div className="env-var-list">{group.vars.map(variable => varRow(variable, false))}</div>
+                          </div>
+                        )}
                       </div>
-                    </button>
-                    <div className="env-heading-actions">
-                      <button className="secondary" onClick={() => onCopy(ids)} disabled={!!busy}>
-                        <Copy size={15} /> Copiar como .env
-                      </button>
-                      <button
-                        className="primary"
-                        onClick={() =>
-                          setRestoring(
-                            isRestoring
-                              ? null
-                              : { origin: group.origin, projectId: projects[0]?.id ?? '', scope: group.vars[0].scope }
-                          )
-                        }
-                        disabled={!!busy || !projects.length}
-                        title={projects.length ? 'Devolver estas variables a un proyecto' : 'No hay proyectos registrados'}
-                      >
-                        <ArchiveRestore size={15} /> Restaurar
-                      </button>
-                      <button
-                        className="danger-outline"
-                        onClick={() => setDiscarding(isDiscarding ? null : group.origin)}
-                        disabled={!!busy}
-                      >
-                        <Trash2 size={15} /> Descartar
-                      </button>
-                    </div>
+                    )
+                  })}
+                </div>
+              </section>
+            )}
+
+            {orphanGroups.length > 0 && (
+              <section className="card span-two">
+                <div className="card-heading">
+                  <div>
+                    <p className="eyebrow">SIN PROYECTO</p>
+                    <h2>Variables que sobrevivieron a su proyecto</h2>
+                    <p>
+                      El proyecto ya no está en el disco y sus <code>.env</code> nunca llegaron a
+                      GitHub: esta es la única copia. Restáuralas en otro proyecto o descártalas.
+                    </p>
                   </div>
+                </div>
+                <div className="vault-list">
+                  {orphanGroups.map(group => {
+                    const ids = group.vars.map(variable => variable.id)
+                    const key = `huerfanas:${group.origin}`
+                    const abierto = expanded.has(key)
+                    const isRestoring = restoring?.origin === group.origin
+                    const isDiscarding = discarding === group.origin
+                    return (
+                      <div key={key} className={`vault-group orphan ${abierto ? 'open' : ''}`}>
+                        {groupHeader(
+                          key,
+                          <FolderX size={15} />,
+                          group.origin,
+                          [
+                            group.path ?? 'Ruta original desconocida',
+                            group.orphanedAt ? `desde ${formatDate(group.orphanedAt)}` : null,
+                          ]
+                            .filter(Boolean)
+                            .join(' · '),
+                          group.vars.length,
+                          <>
+                            <button className="secondary" onClick={() => onCopy(ids)} disabled={!!busy}>
+                              <Copy size={14} /> Copiar .env
+                            </button>
+                            <button
+                              className="primary"
+                              onClick={() =>
+                                setRestoring(
+                                  isRestoring
+                                    ? null
+                                    : {
+                                        origin: group.origin,
+                                        projectId: projects[0]?.id ?? '',
+                                        scope: group.vars[0].scope,
+                                      }
+                                )
+                              }
+                              disabled={!!busy || !projects.length}
+                              title={
+                                projects.length
+                                  ? 'Devolver estas variables a un proyecto'
+                                  : 'No hay proyectos registrados'
+                              }
+                            >
+                              <ArchiveRestore size={14} /> Restaurar
+                            </button>
+                            <button
+                              className="danger-outline"
+                              onClick={() => setDiscarding(isDiscarding ? null : group.origin)}
+                              disabled={!!busy}
+                            >
+                              <Trash2 size={14} /> Descartar
+                            </button>
+                          </>
+                        )}
 
-                  {isRestoring && restoring && (
-                    <div className="env-confirm">
-                      <div className="orphan-restore-form">
-                        <label>
-                          <span>Proyecto de destino</span>
-                          <select
-                            value={restoring.projectId}
-                            onChange={event => setRestoring({ ...restoring, projectId: event.target.value })}
-                          >
-                            {projects.map(project => (
-                              <option key={project.id} value={project.id}>
-                                {project.name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label>
-                          <span>Fichero</span>
-                          <input
-                            value={restoring.scope}
-                            spellCheck={false}
-                            placeholder=".env"
-                            onChange={event => setRestoring({ ...restoring, scope: event.target.value })}
-                          />
-                        </label>
-                      </div>
-                      <div className="env-confirm-actions">
-                        <button className="secondary" onClick={() => setRestoring(null)}>
-                          Cancelar
-                        </button>
-                        <button
-                          className="primary"
-                          disabled={!restoring.projectId || !!busy}
-                          onClick={() => {
-                            const target = projects.find(project => project.id === restoring.projectId)
-                            onAdopt(
-                              { ids, projectId: restoring.projectId, scope: restoring.scope.trim() || null },
-                              target?.name ?? 'el proyecto'
-                            )
-                            setRestoring(null)
-                          }}
-                        >
-                          {busy === 'adopt' ? <LoaderCircle size={14} className="spin" /> : <ArchiveRestore size={14} />}{' '}
-                          Restaurar {ids.length} {ids.length === 1 ? 'variable' : 'variables'}
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                        {/* Los paneles de confirmación se muestran aunque el
+                            grupo esté plegado: los abre el usuario. */}
+                        {isRestoring && restoring && (
+                          <div className="vault-group-panel">
+                            <div className="env-confirm">
+                              <div className="orphan-restore-form">
+                                <label>
+                                  <span>Proyecto de destino</span>
+                                  <select
+                                    value={restoring.projectId}
+                                    onChange={event => setRestoring({ ...restoring, projectId: event.target.value })}
+                                  >
+                                    {projects.map(project => (
+                                      <option key={project.id} value={project.id}>
+                                        {project.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label>
+                                  <span>Fichero</span>
+                                  <input
+                                    value={restoring.scope}
+                                    spellCheck={false}
+                                    placeholder=".env"
+                                    onChange={event => setRestoring({ ...restoring, scope: event.target.value })}
+                                  />
+                                </label>
+                              </div>
+                              <div className="env-confirm-actions">
+                                <button className="secondary" onClick={() => setRestoring(null)}>
+                                  Cancelar
+                                </button>
+                                <button
+                                  className="primary"
+                                  disabled={!restoring.projectId || !!busy}
+                                  onClick={() => {
+                                    const target = projects.find(project => project.id === restoring.projectId)
+                                    onAdopt(
+                                      { ids, projectId: restoring.projectId, scope: restoring.scope.trim() || null },
+                                      target?.name ?? 'el proyecto'
+                                    )
+                                    setRestoring(null)
+                                  }}
+                                >
+                                  {busy === 'adopt' ? (
+                                    <LoaderCircle size={14} className="spin" />
+                                  ) : (
+                                    <ArchiveRestore size={14} />
+                                  )}{' '}
+                                  Restaurar {ids.length} {ids.length === 1 ? 'variable' : 'variables'}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
 
-                  {isDiscarding && (
-                    <div className="env-confirm">
-                      <div>
-                        <strong>
-                          ¿Descartar las {ids.length} variables de «{group.origin}»?
-                        </strong>
-                        <p className="env-confirm-loss">
-                          Es la última copia que queda: el proyecto ya no está en el disco y sus{' '}
-                          <code>.env</code> nunca llegaron a GitHub. Cópialas antes si tienes dudas.
-                        </p>
-                      </div>
-                      <div className="env-confirm-actions">
-                        <button className="secondary" onClick={() => setDiscarding(null)}>
-                          Cancelar
-                        </button>
-                        <button
-                          className="danger"
-                          disabled={!!busy}
-                          onClick={() => {
-                            onDiscard(ids, `«${group.origin}»`)
-                            setDiscarding(null)
-                          }}
-                        >
-                          {busy === 'discard' ? <LoaderCircle size={14} className="spin" /> : <Trash2 size={14} />}{' '}
-                          Descartar definitivamente
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                        {isDiscarding && (
+                          <div className="vault-group-panel">
+                            <div className="env-confirm">
+                              <div>
+                                <strong>
+                                  ¿Descartar las {ids.length} variables de «{group.origin}»?
+                                </strong>
+                                <p className="env-confirm-loss">
+                                  Es la última copia que queda. Cópialas antes si tienes dudas.
+                                </p>
+                              </div>
+                              <div className="env-confirm-actions">
+                                <button className="secondary" onClick={() => setDiscarding(null)}>
+                                  Cancelar
+                                </button>
+                                <button
+                                  className="danger"
+                                  disabled={!!busy}
+                                  onClick={() => {
+                                    onDiscard(ids, `«${group.origin}»`)
+                                    setDiscarding(null)
+                                  }}
+                                >
+                                  {busy === 'discard' ? (
+                                    <LoaderCircle size={14} className="spin" />
+                                  ) : (
+                                    <Trash2 size={14} />
+                                  )}{' '}
+                                  Descartar definitivamente
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
 
-                  {abierto && (
-                    <div className="env-var-list">{group.vars.map(variable => varRow(variable, true))}</div>
-                  )}
-                </section>
-              )
-            })}
+                        {abierto && (
+                          <div className="vault-group-body">
+                            <div className="env-var-list">{group.vars.map(variable => varRow(variable, true))}</div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </section>
+            )}
           </>
         )}
       </div>

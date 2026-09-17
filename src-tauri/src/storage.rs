@@ -334,6 +334,17 @@ impl Storage {
             .map_err(|error| format!("No se pudo convertir la bóveda de variables huérfanas: {error}"))
     }
 
+    /// Cuántas variables hay guardadas en total. Es lo que decide si la bóveda
+    /// aparece en la barra lateral: antes se usaba el recuento de huérfanas, y
+    /// con eso la vista global era inalcanzable para quien no hubiera borrado
+    /// nunca un proyecto.
+    pub fn count_env_vars(&self) -> Result<usize, String> {
+        self.connection
+            .query_row("SELECT COUNT(*) FROM project_env_vars", [], |row| row.get::<_, i64>(0))
+            .map(|count| count.max(0) as usize)
+            .map_err(|error| format!("No se pudo contar las variables de la bóveda: {error}"))
+    }
+
     pub fn count_orphan_env_vars(&self) -> Result<usize, String> {
         self.connection
             .query_row("SELECT COUNT(*) FROM project_env_vars WHERE project_id IS NULL", [], |row| row.get::<_, i64>(0))

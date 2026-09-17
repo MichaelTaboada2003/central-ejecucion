@@ -1314,6 +1314,11 @@ export const api = {
     return memoryEnvVars.filter(variable => variable.projectId === null)
   },
 
+  countEnvVars: async (): Promise<number> => {
+    if (isTauri) return invoke<number>('count_env_vars')
+    return memoryEnvVars.length
+  },
+
   countOrphanEnvVars: async (): Promise<number> => {
     if (isTauri) return invoke<number>('count_orphan_env_vars')
     return memoryEnvVars.filter(variable => variable.projectId === null).length

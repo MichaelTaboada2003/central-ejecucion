@@ -5121,12 +5121,52 @@ button.github-link-pill {
 
 /* ------------------------------------------------------ variables huérfanas */
 
-/* La cabecera del grupo es el disparador del plegado: ocupa todo el ancho que
-   le dejan las acciones, para que el área de clic sea la fila entera y no solo
-   el chevron. */
-.group-toggle {
+/* Acordeón de la bóveda. Mismo lenguaje que `.env-file-row`: una tarjeta por
+   sección y filas compactas dentro. Una tarjeta por grupo dejaba 44px de
+   relleno alrededor de un título cuando el grupo estaba plegado. */
+
+/* Sin margen propio: los 20px de `.card-heading` ya separan la lista del
+   título. Sumar los dos daba 34px de hueco muerto. */
+.vault-list {
+  display: grid;
+  gap: 8px;
+}
+
+.vault-group {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface-0);
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.vault-group:hover {
+  border-color: var(--border-muted);
+}
+
+.vault-group.open {
+  border-color: var(--border-muted);
+  background: var(--bg-surface-1);
+}
+
+/* Las huérfanas son la única copia que queda de esas claves: el borde ámbar es
+   el mismo aviso que usa el resto del panel para lo que se puede perder. */
+.vault-group.orphan {
+  border-color: var(--accent-amber-border);
+}
+
+.vault-group-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+}
+
+/* El disparador ocupa todo el ancho libre para que el área de clic sea la fila
+   entera, no solo el chevron. */
+.vault-group-toggle {
+  display: flex;
+  align-items: center;
   gap: 10px;
   flex: 1;
   min-width: 0;
@@ -5139,39 +5179,91 @@ button.github-link-pill {
   cursor: pointer;
 }
 
-.group-toggle > svg {
+.vault-group-toggle > svg {
   flex-shrink: 0;
-  margin-top: 3px;
   color: var(--text-tertiary);
-  transition: color 120ms ease;
+  transition: color var(--transition-fast);
 }
 
-.group-toggle:hover > svg {
+.vault-group-toggle:hover > svg {
   color: var(--text-primary);
 }
 
-.group-toggle > div {
+.vault-group-id {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+  color: var(--accent-cyan);
+}
+
+.vault-group.orphan .vault-group-id {
+  color: var(--accent-amber);
+}
+
+.vault-group-id > span {
   min-width: 0;
 }
 
-/* El recuento va en la cabecera porque un grupo plegado tiene que seguir
-   diciendo cuánto guarda: es lo que permite decidir si merece abrirlo. */
-.group-count {
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
-  background: var(--bg-surface-2, rgba(255, 255, 255, 0.04));
-  color: var(--text-tertiary);
+.vault-group-id strong {
+  display: block;
+  font-size: 13px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vault-group-id small {
+  display: block;
+  margin-top: 2px;
   font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Un grupo plegado tiene que seguir diciendo cuánto guarda: es lo que permite
+   decidir si merece abrirlo. */
+.vault-group-count {
+  flex-shrink: 0;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border-muted);
+  background: var(--bg-surface-1);
+  color: var(--text-secondary);
+  font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 0.02em;
   white-space: nowrap;
 }
 
-.orphan-group .card-heading h2 {
+.vault-group-actions {
   display: flex;
-  align-items: center;
-  gap: 9px;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.vault-group-actions button {
+  font-size: 11.5px;
+  padding: 5px 10px;
+}
+
+.vault-group-body {
+  padding: 12px 14px 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* El panel de confirmación trae su propio margen superior para separarse del
+   texto en la pestaña del proyecto; aquí lo pone el relleno del contenedor. */
+.vault-group-panel {
+  padding: 0 14px 12px;
+}
+
+.vault-group-panel .env-confirm {
+  margin-top: 0;
 }
 
 .orphan-restore-form {

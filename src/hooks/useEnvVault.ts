@@ -16,12 +16,17 @@ import type { NoticeKind } from './useNotices'
 export function useEnvVault(notify: (text: string, kind: NoticeKind) => void) {
   const [snapshot, setSnapshot] = useState<EnvVaultSnapshot | null>(null)
   const [count, setCount] = useState(0)
+  // El total decide si la bóveda se ofrece en la barra lateral; el de huérfanas
+  // es el de la insignia, que avisa de lo que pide atención.
+  const [totalCount, setTotalCount] = useState(0)
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
 
   const loadCount = useCallback(async () => {
     try {
-      setCount(await api.countOrphanEnvVars())
+      const [orphanCount, total] = await Promise.all([api.countOrphanEnvVars(), api.countEnvVars()])
+      setCount(orphanCount)
+      setTotalCount(total)
     } catch {
       // Un fallo al contar no debe teñir de rojo el arranque de la app: la
       // insignia simplemente no aparece.
@@ -40,6 +45,7 @@ export function useEnvVault(notify: (text: string, kind: NoticeKind) => void) {
         const next = await api.listEnvVault()
         setSnapshot(next)
         setCount(next.orphanCount)
+        setTotalCount(next.total)
         if (!silencioso) {
           const proyectos = next.groups.filter(group => group.projectId).length
           notify(
@@ -111,5 +117,5 @@ export function useEnvVault(notify: (text: string, kind: NoticeKind) => void) {
     [notify]
   )
 
-  return { snapshot, orphans, count, loading, busy, load, loadCount, adopt, discard, copyAsEnv }
+  return { snapshot, orphans, count, totalCount, loading, busy, load, loadCount, adopt, discard, copyAsEnv }
 }
