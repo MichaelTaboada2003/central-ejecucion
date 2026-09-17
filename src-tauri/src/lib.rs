@@ -1,3 +1,4 @@
+pub mod deps_audit;
 pub mod disk;
 pub mod domain;
 pub mod env_vars;
@@ -142,6 +143,9 @@ pub fn run() {
             commands::projects::unregister_project,
             commands::projects::toggle_pin_project,
             commands::projects::toggle_archive_project,
+            // dependencias
+            commands::dependencies::audit_project_dependencies,
+            commands::dependencies::remove_project_dependency,
             // variables de entorno
             commands::env_vars::get_project_env_vars,
             commands::env_vars::import_env_vars,

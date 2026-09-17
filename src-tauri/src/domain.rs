@@ -119,6 +119,18 @@ pub struct DeclaredDependency {
     pub source: String,
 }
 
+/// Resultado de auditar las dependencias declaradas frente al código fuente.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DependencyAuditResult {
+    /// Nombres de las dependencias declaradas que no se encontraron en uso.
+    pub unused: Vec<String>,
+    /// Cuántos archivos de código fueron analizados en el proyecto.
+    pub total_scanned_files: usize,
+    /// Marca de tiempo de la auditoría.
+    pub timestamp: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectScan {

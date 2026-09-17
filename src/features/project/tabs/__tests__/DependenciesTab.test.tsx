@@ -1,9 +1,10 @@
-import { render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { DependenciesTab } from '../DependenciesTab'
-import { detalle } from '../../../../test/fixtures'
+import { detalle, proyecto } from '../../../../test/fixtures'
 import { IDLE_INSTALL_ACTIVITY, type InstallActivity } from '../../../../hooks/useInstallActivity'
 import type { ProjectDetail } from '../../../../types'
+import { api } from '../../../../api'
 
 function montar(scan: Partial<ProjectDetail['scan']>, install?: InstallActivity, onRun = vi.fn()) {
   const base = detalle().scan
@@ -136,3 +137,168 @@ describe('DependenciesTab: la instalación se ve mientras ocurre', () => {
     expect(onRun).toHaveBeenCalledWith('install')
   })
 })
+
+describe('DependenciesTab: detección y eliminación de dependencias huérfanas', () => {
+  it('detecta dependencias sin uso al pulsar el botón de auditoría', async () => {
+    const p = proyecto()
+    const scan: Partial<ProjectDetail['scan']> = {
+      packageManager: 'pnpm',
+      dependencies: [
+        { name: 'react', version: '^19.0.0', isDev: false, source: 'package.json' },
+        { name: 'lodash', version: '^4.17.21', isDev: false, source: 'package.json' },
+      ],
+    }
+
+    vi.spyOn(api, 'auditDependencies').mockResolvedValueOnce({
+      unused: ['lodash'],
+      totalScannedFiles: 14,
+      timestamp: new Date().toISOString(),
+    })
+
+    const onNotify = vi.fn()
+    render(
+      <DependenciesTab
+        project={p}
+        scan={{ ...detalle().scan, ...scan } as ProjectDetail['scan']}
+        onRun={vi.fn()}
+        busy={null}
+        onNotify={onNotify}
+      />
+    )
+
+    const auditBtn = screen.getByRole('button', { name: /detectar no usadas/i })
+    expect(auditBtn).toBeTruthy()
+
+    await act(async () => {
+      fireEvent.click(auditBtn)
+    })
+
+    expect(api.auditDependencies).toHaveBeenCalledWith(p.id)
+    expect(onNotify).toHaveBeenCalledWith(expect.stringContaining('1 dependencias sin uso'), 'info')
+
+    // Banner and chip
+    expect(screen.getByText(/dependencias sin referencias directas/i)).toBeTruthy()
+    const chipUnused = screen.getByRole('button', { name: /^sin uso \(1\)$/i })
+    expect(chipUnused).toBeTruthy()
+
+    // Tag on lodash
+    expect(screen.getByText('Sin uso')).toBeTruthy()
+
+    // Filter by unused
+    await act(async () => {
+      fireEvent.click(chipUnused)
+    })
+    expect(screen.getByText('lodash')).toBeTruthy()
+    expect(screen.queryByText('react')).toBeNull()
+  })
+
+  it('permite abrir el modal de confirmación y eliminar una dependencia', async () => {
+    const p = proyecto()
+    const scan: Partial<ProjectDetail['scan']> = {
+      packageManager: 'pnpm',
+      dependencies: [
+        { name: 'lodash', version: '^4.17.21', isDev: false, source: 'package.json' },
+      ],
+    }
+
+    vi.spyOn(api, 'removeDependency').mockResolvedValueOnce('Dependencia eliminada con éxito')
+
+    const onNotify = vi.fn()
+    const onReloadProject = vi.fn()
+
+    render(
+      <DependenciesTab
+        project={p}
+        scan={{ ...detalle().scan, ...scan } as ProjectDetail['scan']}
+        onRun={vi.fn()}
+        busy={null}
+        onNotify={onNotify}
+        onReloadProject={onReloadProject}
+      />
+    )
+
+    const deleteBtn = screen.getByRole('button', { name: /eliminar dependencia lodash/i })
+    fireEvent.click(deleteBtn)
+
+    // Modal appears
+    expect(screen.getByText(/¿Desinstalar «lodash»\?/i)).toBeTruthy()
+    expect(screen.getByText('pnpm remove lodash')).toBeTruthy()
+
+    // Confirm deletion
+    const confirmBtn = screen.getByRole('button', { name: /^eliminar dependencia$/i })
+    await act(async () => {
+      fireEvent.click(confirmBtn)
+    })
+
+    expect(api.removeDependency).toHaveBeenCalledWith(p.id, 'lodash')
+    expect(onNotify).toHaveBeenCalledWith('Dependencia eliminada con éxito', 'success')
+    expect(onReloadProject).toHaveBeenCalled()
+    expect(screen.queryByText(/¿Desinstalar «lodash»\?/i)).toBeNull()
+  })
+
+  it('cancela la eliminación si el usuario pulsa Cancelar', () => {
+    const p = proyecto()
+    const scan: Partial<ProjectDetail['scan']> = {
+      packageManager: 'npm',
+      dependencies: [
+        { name: 'moment', version: '^2.29.4', isDev: false, source: 'package.json' },
+      ],
+    }
+
+    const spyRemove = vi.spyOn(api, 'removeDependency')
+
+    render(
+      <DependenciesTab
+        project={p}
+        scan={{ ...detalle().scan, ...scan } as ProjectDetail['scan']}
+        onRun={vi.fn()}
+        busy={null}
+      />
+    )
+
+    const deleteBtn = screen.getByRole('button', { name: /eliminar dependencia moment/i })
+    fireEvent.click(deleteBtn)
+
+    expect(screen.getByText(/¿Desinstalar «moment»\?/i)).toBeTruthy()
+
+    const cancelBtn = screen.getByRole('button', { name: /cancelar/i })
+    fireEvent.click(cancelBtn)
+
+    expect(spyRemove).not.toHaveBeenCalled()
+    expect(screen.queryByText(/¿Desinstalar «moment»\?/i)).toBeNull()
+  })
+
+  it('al hacer clic directamente en la tarjeta de una dependencia se abre el modal de gestión', () => {
+    const p = proyecto()
+    const scan: Partial<ProjectDetail['scan']> = {
+      packageManager: 'pnpm',
+      dependencies: [
+        { name: 'clsx', version: '^2.1.1', isDev: false, source: 'package.json' },
+      ],
+    }
+
+    render(
+      <DependenciesTab
+        project={p}
+        scan={{ ...detalle().scan, ...scan } as ProjectDetail['scan']}
+        onRun={vi.fn()}
+        busy={null}
+      />
+    )
+
+    // La tarjeta es seleccionable y tiene rol de botón
+    const card = screen.getByTitle(/clic para ver detalles y gestionar clsx/i)
+    fireEvent.click(card)
+
+    // Se abre el modal con comando y detalles
+    expect(screen.getByText(/¿Desinstalar «clsx»\?/i)).toBeTruthy()
+    expect(screen.getByText('pnpm remove clsx')).toBeTruthy()
+    expect(screen.getByText(/ver paquete en el registro oficial/i)).toBeTruthy()
+
+    // Cerrar el modal
+    const closeBtn = screen.getByRole('button', { name: /cancelar/i })
+    fireEvent.click(closeBtn)
+    expect(screen.queryByText(/¿Desinstalar «clsx»\?/i)).toBeNull()
+  })
+})
+

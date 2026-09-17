@@ -445,12 +445,15 @@ export function ProjectWorkspace({
       )}
       {tab === 'dependencies' && (
         <DependenciesTab
+          project={project}
           scan={scan}
           onRun={onRun}
           busy={busy}
           install={install}
           onCancelInstall={onStop}
           onOpenLogs={tabsVisibles.some(t => t.id === 'processes') ? () => setTab('processes') : undefined}
+          onNotify={onNotify}
+          onReloadProject={onRefresh}
         />
       )}
       {tab === 'disk' && (

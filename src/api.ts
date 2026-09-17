@@ -4,6 +4,7 @@ import type {
   AdoptEnvVarsRequest,
   CleanupPreview,
   CloneRepoRequest,
+  DependencyAuditResult,
   DiskReport,
   EnvVar,
   EnvVaultGroup,
@@ -890,6 +891,20 @@ export const api = {
       persistMockProjects()
     }
     return isArchived
+  },
+
+  auditDependencies: async (projectId: string): Promise<DependencyAuditResult> => {
+    if (isTauri) return invoke<DependencyAuditResult>('audit_project_dependencies', { projectId })
+    return {
+      unused: [],
+      totalScannedFiles: 10,
+      timestamp: new Date().toISOString(),
+    }
+  },
+
+  removeDependency: async (projectId: string, dependencyName: string): Promise<string> => {
+    if (isTauri) return invoke<string>('remove_project_dependency', { projectId, dependencyName })
+    return `Dependencia «${dependencyName}» eliminada correctamente.`
   },
 
 

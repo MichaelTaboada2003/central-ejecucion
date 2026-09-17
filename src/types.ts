@@ -46,6 +46,12 @@ export interface DeclaredDependency {
   source: string
 }
 
+export interface DependencyAuditResult {
+  unused: string[]
+  totalScannedFiles: number
+  timestamp: string
+}
+
 export interface ProjectScan {
   projectType: string
   kind?: ProjectKind
