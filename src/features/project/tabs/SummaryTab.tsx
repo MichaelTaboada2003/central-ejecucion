@@ -1,4 +1,4 @@
-import { ChevronRight, Wrench } from 'lucide-react'
+import { ChevronRight, ShieldCheck, Wrench } from 'lucide-react'
 import { formatDate } from '../../../lib/format'
 import { describeCommandOutcome } from '../../../lib/format'
 import { kindMeta } from '../../../lib/kindMeta'
@@ -39,7 +39,7 @@ export function SummaryTab({
       : 'Comando de Inicio'
   return (
     <div className="detail-grid">
-      <section className="card overview-card">
+      <section className={`card overview-card ${kind === 'script' || kind === 'inert' ? 'span-two' : ''}`}>
         <div className="card-heading">
           <div>
             <p className="eyebrow">{kind === 'service' ? 'COMANDO PRINCIPAL' : kindMeta[kind].label.toUpperCase()}</p>
@@ -110,6 +110,57 @@ export function SummaryTab({
         </div>
       </section>
       )}
+
+      <section className="card span-two">
+        <div className="card-heading">
+          <div>
+            <p className="eyebrow">REGISTRO Y UBICACIÓN</p>
+            <h2>Detalles del Proyecto</h2>
+          </div>
+        </div>
+
+        <div className="project-paths-grid">
+          <div className="meta-copyable">
+            <div className="meta-header">
+              <span>Ruta original</span>
+              <CopyButton
+                value={project.path}
+                onCopy={() => onNotify('Ruta copiada al portapapeles', 'success')}
+              />
+            </div>
+            <code title={project.path}>{project.path}</code>
+          </div>
+
+          <div className="meta-copyable">
+            <div className="meta-header">
+              <span>Ruta canónica</span>
+              <CopyButton
+                value={project.canonicalPath}
+                onCopy={() => onNotify('Ruta canónica copiada', 'success')}
+              />
+            </div>
+            <code title={project.canonicalPath}>{project.canonicalPath}</code>
+          </div>
+        </div>
+
+        <div className="project-meta-grid">
+          <Meta label="Tipo de proyecto" value={scan.projectType || 'No detectado'} />
+          <Meta label="Frameworks" value={scan.frameworks?.join(', ') || 'No detectados'} />
+          <Meta label="Etiquetas" value={project.tags?.join(', ') || 'Sin etiquetas'} />
+          <Meta label="Fecha de registro" value={formatDate(project.createdAt)} />
+        </div>
+
+        <div className="safety-note" style={{ marginTop: 'var(--space-5)' }}>
+          <ShieldCheck size={20} />
+          <div>
+            <h3>Inmutabilidad de alcance</h3>
+            <p>
+              La aplicación restringe las operaciones al árbol del proyecto. Si la ruta es alterada o
+              apunta fuera, las acciones se bloquean preventivamente.
+            </p>
+          </div>
+        </div>
+      </section>
 
       {/* El historial de ejecuciones solo existe si algo se ejecuta. */}
       {kind !== 'script' && kind !== 'inert' && (

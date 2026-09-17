@@ -1,4 +1,4 @@
-import { AlertTriangle, AppWindow, Archive, ArchiveRestore, ArrowLeft, ArrowUpRight, Bot, ChevronRight, CircleStop, FileCode2, FolderOpen, GitFork, HardDrive, KeyRound, LayoutDashboard, LoaderCircle, PackageOpen, Pin, Play, RefreshCw, RotateCcw, Settings2, SquareTerminal, Terminal, Trash2 } from 'lucide-react'
+import { AlertTriangle, AppWindow, Archive, ArchiveRestore, ArrowLeft, ArrowUpRight, Bot, ChevronRight, CircleStop, FileCode2, FolderOpen, GitFork, HardDrive, KeyRound, LayoutDashboard, LoaderCircle, PackageOpen, Pin, Play, RefreshCw, RotateCcw, SquareTerminal, Terminal, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../../api'
 import { formatDate } from '../../lib/format'
@@ -13,7 +13,6 @@ import { StatusPill } from '../../components/Status'
 import { useEnvVars } from '../../hooks/useEnvVars'
 import { useInstallActivity } from '../../hooks/useInstallActivity'
 import { formatDurationText } from '../../lib/format'
-import { ConfigurationTab } from './tabs/ConfigurationTab'
 import { DependenciesTab } from './tabs/DependenciesTab'
 import { EnvironmentTab } from './tabs/EnvironmentTab'
 import { DiskTab } from './tabs/DiskTab'
@@ -34,7 +33,6 @@ const tabs: Array<{ id: Tab; label: string; icon: typeof LayoutDashboard }> = [
   { id: 'disk', label: 'Disco y limpieza', icon: HardDrive },
   { id: 'scripts', label: 'Scripts', icon: FileCode2 },
   { id: 'environment', label: 'Entorno', icon: KeyRound },
-  { id: 'configuration', label: 'Configuración', icon: Settings2 },
 ]
 
 export function ProjectWorkspace({
@@ -482,7 +480,6 @@ export function ProjectWorkspace({
           onCopy={env.copyAsEnv}
         />
       )}
-      {tab === 'configuration' && <ConfigurationTab project={project} scan={scan} onNotify={onNotify} />}
     </>
   )
 }

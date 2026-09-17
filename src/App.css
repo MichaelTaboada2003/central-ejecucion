@@ -2471,15 +2471,56 @@ code, kbd, pre, .mono {
   gap: 8px;
 }
 
-.configuration-list {
+.project-paths-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
 }
 
-.configuration-list .meta strong {
-  white-space: normal;
-  overflow-wrap: anywhere;
+.meta-copyable {
+  min-width: 0;
+  background: var(--bg-surface-0);
+  padding: var(--space-4);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.meta-copyable .meta-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.meta-copyable .meta-header span {
+  color: var(--text-tertiary);
+  font: 600 10px var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.meta-copyable .meta-header .copy-button {
+  width: 24px;
+  height: 24px;
+}
+
+.meta-copyable code {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.project-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-4);
 }
 
 .loading-inline {
@@ -4245,7 +4286,8 @@ button.github-link-pill {
   .stat-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
-  .metadata-grid {
+  .metadata-grid,
+  .project-meta-grid {
     grid-template-columns: repeat(2, 1fr);
   }
   .table-head, .table-row {
@@ -4268,6 +4310,9 @@ button.github-link-pill {
 @media (max-width: 900px) {
   .stat-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .project-paths-grid {
+    grid-template-columns: 1fr;
   }
 }
 

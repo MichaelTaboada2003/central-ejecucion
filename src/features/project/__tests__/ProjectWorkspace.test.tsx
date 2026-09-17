@@ -75,7 +75,7 @@ describe('ProjectWorkspace: la acción principal depende de la naturaleza', () =
     const pestanas = [...barra.querySelectorAll('button')].map(b => (b.textContent ?? '').trim())
     // «Entorno» sigue estando: un script también lee su `.env`, y sus
     // credenciales corren el mismo riesgo al borrar el proyecto.
-    expect(pestanas).toEqual(['Resumen', 'Git & GitHub', 'Dependencias', 'Disco y limpieza', 'Entorno', 'Configuración'])
+    expect(pestanas).toEqual(['Resumen', 'Git & GitHub', 'Dependencias', 'Disco y limpieza', 'Entorno'])
   })
 
   it('un cuaderno abre Jupyter Lab', async () => {
@@ -170,3 +170,32 @@ describe('ProjectWorkspace: instalar dependencias no se confunde con estar en ma
     expect(screen.getByRole('button', { name: /^run$/i })).toHaveProperty('disabled', true)
   })
 })
+
+describe('ProjectWorkspace: pestañas y metadatos integrados en Resumen', () => {
+  it('un servicio ofrece las 7 pestañas principales sin la pestaña obsoleta de configuración', () => {
+    montar({ project: proyecto({ kind: 'service' }) })
+    const barra = document.querySelector('.tabs') as HTMLElement
+    const pestanas = [...barra.querySelectorAll('button')].map(b => (b.textContent ?? '').trim())
+    expect(pestanas).toEqual([
+      'Resumen',
+      'Git & GitHub',
+      'Procesos y logs',
+      'Dependencias',
+      'Disco y limpieza',
+      'Scripts',
+      'Entorno',
+    ])
+    expect(pestanas).not.toContain('Configuración')
+  })
+
+  it('la pestaña Resumen incluye la sección de detalles del proyecto y rutas', () => {
+    montar({
+      project: proyecto({ path: '/Users/test/mi-proyecto', canonicalPath: '/Users/test/mi-proyecto' }),
+      tab: 'summary',
+    })
+    expect(screen.getByText('Detalles del Proyecto')).toBeTruthy()
+    expect(screen.getByText('Inmutabilidad de alcance')).toBeTruthy()
+    expect(screen.getAllByText('/Users/test/mi-proyecto').length).toBeGreaterThanOrEqual(2)
+  })
+})
+
