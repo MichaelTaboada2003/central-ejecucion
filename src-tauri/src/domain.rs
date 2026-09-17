@@ -426,6 +426,37 @@ pub struct EnvFileInfo {
     pub only_in_vault: Vec<String>,
 }
 
+/// Un grupo de la bóveda global: las variables de un proyecto registrado, o
+/// el bloque de las que perdieron el suyo.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvVaultGroup {
+    /// `None` solo en el grupo de huérfanas.
+    pub project_id: Option<String>,
+    pub project_name: String,
+    pub project_path: Option<String>,
+    /// La carpeta sigue estando en el disco. Un proyecto registrado cuyo
+    /// volumen no está montado sigue teniendo sus variables aquí: es
+    /// precisamente cuando más falta hace poder copiarlas.
+    pub available: bool,
+    pub secret_count: usize,
+    pub vars: Vec<EnvVar>,
+}
+
+/// Fotografía completa de la bóveda, con todo lo guardado agrupado por dueño.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvVaultSnapshot {
+    /// Proyectos por nombre y, siempre al final, las huérfanas.
+    pub groups: Vec<EnvVaultGroup>,
+    pub total: usize,
+    pub orphan_count: usize,
+    /// Filas que esta carga acaba de rescatar porque apuntaban a un proyecto
+    /// que ya no existe. Es lo que convierte «Actualizar» en algo más que un
+    /// recargado de la lista.
+    pub reconciled: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectEnvVars {

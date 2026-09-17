@@ -2,12 +2,13 @@
 //! editarlas, escribirlas de vuelta al disco y rescatar las que quedaron
 //! huérfanas al borrar un proyecto.
 use crate::domain::{
-    AdoptEnvVarsRequest, EnvVar, ImportEnvRequest, ImportEnvResult, ProjectEnvVars, SaveEnvVarRequest,
-    WriteEnvFileRequest, WriteEnvFileResult,
+    AdoptEnvVarsRequest, EnvVar, EnvVaultGroup, EnvVaultSnapshot, ImportEnvRequest, ImportEnvResult,
+    ProjectEnvVars, SaveEnvVarRequest, WriteEnvFileRequest, WriteEnvFileResult,
 };
 use crate::env_vars;
 use crate::{trusted_project_root, AppState};
 use chrono::Utc;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tauri::Manager;
 use uuid::Uuid;
@@ -213,6 +214,71 @@ fn back_up_existing(
     std::fs::copy(target, &backup)
         .map_err(|error| format!("No se pudo respaldar {}: {error}", target.display()))?;
     Ok(Some(backup.to_string_lossy().to_string()))
+}
+
+/// Bóveda completa, agrupada por proyecto y con las huérfanas al final.
+///
+/// Reconcilia antes de leer: es lo que hace que «Actualizar» sirva de algo más
+/// que para volver a pintar la misma lista. Las filas que apuntaban a un
+/// proyecto inexistente pasan a huérfanas aquí y por fin se ven.
+#[tauri::command(async)]
+pub fn list_env_vault(state: tauri::State<'_, AppState>) -> Result<EnvVaultSnapshot, String> {
+    let (reconciled, vars, projects) = state.with_storage(|db| {
+        let reconciled = db.reconcile_orphan_env_vars()?;
+        Ok((reconciled, db.list_all_env_vars()?, db.list_projects()?))
+    })?;
+
+    let total = vars.len();
+    let mut by_project: HashMap<String, Vec<EnvVar>> = HashMap::new();
+    let mut orphans: Vec<EnvVar> = Vec::new();
+    for variable in vars {
+        match variable.project_id.clone() {
+            Some(id) => by_project.entry(id).or_default().push(variable),
+            None => orphans.push(variable),
+        }
+    }
+    let orphan_count = orphans.len();
+
+    // Un proyecto sin ninguna variable no pinta nada en la bóveda: la lista es
+    // de lo que hay guardado, no de proyectos.
+    let mut groups: Vec<EnvVaultGroup> = projects
+        .into_iter()
+        .filter_map(|project| {
+            let vars = by_project.remove(&project.id)?;
+            Some(EnvVaultGroup {
+                available: Path::new(&project.canonical_path).is_dir(),
+                project_id: Some(project.id),
+                project_name: project.name,
+                project_path: Some(project.path),
+                secret_count: vars.iter().filter(|variable| variable.is_secret).count(),
+                vars,
+            })
+        })
+        .collect();
+    groups.sort_by(|left, right| left.project_name.to_lowercase().cmp(&right.project_name.to_lowercase()));
+
+    // Las huérfanas van al final, como un grupo más: son el destino natural de
+    // «restaurar» y «descartar», y mezclarlas entre los proyectos vivos haría
+    // perder de vista que son credenciales sin dueño.
+    if !orphans.is_empty() {
+        orphans.sort_by(|left, right| {
+            right
+                .orphaned_at
+                .cmp(&left.orphaned_at)
+                .then(left.scope.cmp(&right.scope))
+                .then(left.key.to_lowercase().cmp(&right.key.to_lowercase()))
+        });
+        groups.push(EnvVaultGroup {
+            project_id: None,
+            project_name: "Sin proyecto".into(),
+            project_path: None,
+            available: false,
+            secret_count: orphans.iter().filter(|variable| variable.is_secret).count(),
+            vars: orphans,
+        });
+    }
+
+    Ok(EnvVaultSnapshot { groups, total, orphan_count, reconciled })
 }
 
 #[tauri::command(async)]

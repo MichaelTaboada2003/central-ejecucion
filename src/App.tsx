@@ -724,11 +724,12 @@ export default function App() {
             />
           ) : viewMode === 'vault' ? (
             <EnvVaultView
+              snapshot={vault.snapshot}
               orphans={vault.orphans}
               projects={projects}
               loading={vault.loading}
               busy={vault.busy}
-              onLoad={() => void vault.load()}
+              onLoad={silencioso => void vault.load(silencioso)}
               onAdopt={(request, projectName) => void vault.adopt(request, projectName)}
               onDiscard={(ids, label) => void vault.discard(ids, label)}
               onCopy={ids => void vault.copyAsEnv(ids)}

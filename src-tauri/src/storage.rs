@@ -341,6 +341,42 @@ impl Storage {
             .map_err(|error| format!("No se pudo contar las variables huérfanas: {error}"))
     }
 
+    /// Toda la bóveda: las variables vivas y las huérfanas, sin filtrar. El
+    /// agrupado por proyecto lo hace el comando, que es quien tiene la lista de
+    /// proyectos a mano.
+    pub fn list_all_env_vars(&self) -> Result<Vec<EnvVar>, String> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT * FROM project_env_vars ORDER BY scope, key COLLATE NOCASE")
+            .map_err(|error| format!("No se pudo consultar la bóveda de variables: {error}"))?;
+        let rows = statement
+            .query_map([], map_env_var)
+            .map_err(|error| format!("No se pudo leer la bóveda de variables: {error}"))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("No se pudo convertir la bóveda de variables: {error}"))
+    }
+
+    /// Marca como huérfanas las filas que apuntan a un proyecto que ya no está
+    /// en la tabla.
+    ///
+    /// La clave ajena es `ON DELETE SET NULL`, así que el camino normal —borrar
+    /// el proyecto desde el panel— ya las deja bien. Esto recoge lo que se
+    /// escapó: bases creadas antes de que la clave ajena existiera, o filas
+    /// escritas con `PRAGMA foreign_keys` apagado. Una fila así es invisible en
+    /// toda la aplicación: no sale en la bóveda porque su `project_id` no es
+    /// `NULL`, y no sale en el proyecto porque el proyecto ya no existe.
+    pub fn reconcile_orphan_env_vars(&self) -> Result<usize, String> {
+        self.connection
+            .execute(
+                "UPDATE project_env_vars
+                 SET project_id = NULL, orphaned_at = COALESCE(orphaned_at, ?1)
+                 WHERE project_id IS NOT NULL
+                   AND project_id NOT IN (SELECT id FROM projects)",
+                params![Utc::now().to_rfc3339()],
+            )
+            .map_err(|error| format!("No se pudo reconciliar la bóveda de variables: {error}"))
+    }
+
     pub fn get_env_var(&self, id: &str) -> Result<EnvVar, String> {
         self.connection
             .query_row("SELECT * FROM project_env_vars WHERE id = ?1", params![id], map_env_var)

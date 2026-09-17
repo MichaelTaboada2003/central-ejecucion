@@ -12,11 +12,14 @@ export function GitTab({
   gitHubRepo,
   onNotify,
   onReloadProject,
+  reloadToken = 0,
 }: {
   project: Project
   gitHubRepo?: GitHubRepo
   onNotify: (text: string, kind: 'success' | 'error' | 'info') => void
   onReloadProject: () => void
+  /** Cambia cuando «Actualizar» del proyecto se pulsa con esta pestaña abierta. */
+  reloadToken?: number
 }) {
   const [gitStatus, setGitStatus] = useState<GitStatusInfo | null>(null)
   const [loading, setLoading] = useState(true)
@@ -68,6 +71,19 @@ export function GitTab({
   useEffect(() => {
     void loadGitStatus()
   }, [loadGitStatus])
+
+  // El «Actualizar» de la cabecera reescanea el proyecto, pero el estado de git
+  // vive aquí dentro: sin esto la pestaña se quedaba con la foto anterior y el
+  // botón parecía no hacer nada. Se ignora el valor inicial porque el efecto de
+  // arriba ya carga al montar.
+  const primerToken = useRef(true)
+  useEffect(() => {
+    if (primerToken.current) {
+      primerToken.current = false
+      return
+    }
+    void loadGitStatus()
+  }, [reloadToken, loadGitStatus])
 
   // Al abrir la pestaña se comprueba una vez en segundo plano: si falla la red o
   // el token, la pestaña sigue siendo útil con los datos locales y no se

@@ -251,6 +251,27 @@ export interface EnvVar {
   orphanedAt: string | null
 }
 
+/** Un grupo de la bóveda global: un proyecto registrado, o las huérfanas. */
+export interface EnvVaultGroup {
+  /** `null` solo en el grupo de huérfanas. */
+  projectId: string | null
+  projectName: string
+  projectPath: string | null
+  /** La carpeta del proyecto sigue estando en el disco. */
+  available: boolean
+  secretCount: number
+  vars: EnvVar[]
+}
+
+/** Fotografía completa de la bóveda, agrupada por dueño. */
+export interface EnvVaultSnapshot {
+  groups: EnvVaultGroup[]
+  total: number
+  orphanCount: number
+  /** Filas rescatadas en esta carga por apuntar a un proyecto inexistente. */
+  reconciled: number
+}
+
 /** Estado de un fichero `.env` del proyecto frente a la bóveda. */
 export interface EnvFileInfo {
   name: string

@@ -1,5 +1,5 @@
 import { AlertTriangle, AppWindow, Archive, ArchiveRestore, ArrowLeft, ArrowUpRight, Bot, ChevronRight, CircleStop, FileCode2, FolderOpen, GitFork, HardDrive, KeyRound, LayoutDashboard, LoaderCircle, PackageOpen, Pin, Play, RefreshCw, RotateCcw, Settings2, SquareTerminal, Terminal, Trash2 } from 'lucide-react'
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { api } from '../../api'
 import { formatDate } from '../../lib/format'
 import { kindMeta } from '../../lib/kindMeta'
@@ -90,6 +90,24 @@ export function ProjectWorkspace({
   // insignia de «claves sin proteger» tiene que poder avisar antes de que nadie
   // entre a mirar.
   const env = useEnvVars({ projectId: project.id, notify: onNotify })
+  const [gitReloadToken, setGitReloadToken] = useState(0)
+
+  /**
+   * «Actualizar» reescanea el proyecto y recarga, además, el estado de la
+   * pestaña que se está viendo.
+   *
+   * El reescaneo siempre ocurrió, pero cada pestaña guarda su propio estado
+   * —bóveda, git, disco— fuera de `loadDetail`, así que desde Entorno o Git el
+   * botón no cambiaba nada en pantalla y parecía muerto. Se refresca solo lo
+   * visible: traer también git y disco estando en Resumen dispararía llamadas
+   * de red y un recorrido del árbol que nadie ha pedido.
+   */
+  const handleRefresh = () => {
+    onRefresh()
+    if (tab === 'environment') void env.reload()
+    else if (tab === 'git') setGitReloadToken(token => token + 1)
+    else if (tab === 'disk') onDisk()
+  }
   // La instalación es un proceso largo lanzado a espaldas de la interfaz: el
   // panel la sigue a partir del historial y de la salida del gestor, y avisa
   // cuando termina en vez de dejar que la pantalla cambie sola.
@@ -158,7 +176,12 @@ export function ProjectWorkspace({
           <strong>{project.name}</strong>
         </div>
         <div className="header-actions">
-          <button className="secondary" onClick={onRefresh} disabled={!!busy}>
+          <button
+            className="secondary"
+            onClick={handleRefresh}
+            disabled={!!busy}
+            title="Reescanear el proyecto y recargar esta pestaña"
+          >
             <RefreshCw size={15} className={busy === 'refresh' ? 'spin' : ''} /> Actualizar
           </button>
           {project.localUrl && servesOverHttp && (
@@ -410,6 +433,7 @@ export function ProjectWorkspace({
           gitHubRepo={gitHubRepo}
           onNotify={onNotify}
           onReloadProject={onRefresh}
+          reloadToken={gitReloadToken}
         />
       )}
       {tab === 'processes' && (

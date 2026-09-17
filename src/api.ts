@@ -6,6 +6,8 @@ import type {
   CloneRepoRequest,
   DiskReport,
   EnvVar,
+  EnvVaultGroup,
+  EnvVaultSnapshot,
   ImportEnvRequest,
   ImportEnvResult,
   ProjectEnvVars,
@@ -1279,6 +1281,32 @@ export const api = {
   writeEnvFile: async (projectId: string, scope: string): Promise<WriteEnvFileResult> => {
     if (isTauri) return invoke<WriteEnvFileResult>('write_env_file', { request: { projectId, scope, confirmed: true } })
     throw new Error('Escribir ficheros del proyecto requiere la aplicación de escritorio.')
+  },
+
+  listEnvVault: async (): Promise<EnvVaultSnapshot> => {
+    if (isTauri) return invoke<EnvVaultSnapshot>('list_env_vault')
+    const groups: EnvVaultGroup[] = memoryProjects
+      .map(project => ({
+        projectId: project.id,
+        projectName: project.name,
+        projectPath: project.path,
+        available: true,
+        vars: memoryEnvVars.filter(variable => variable.projectId === project.id),
+      }))
+      .filter(group => group.vars.length > 0)
+      .map(group => ({ ...group, secretCount: group.vars.filter(variable => variable.isSecret).length }))
+    const orphans = memoryEnvVars.filter(variable => variable.projectId === null)
+    if (orphans.length) {
+      groups.push({
+        projectId: null,
+        projectName: 'Sin proyecto',
+        projectPath: null,
+        available: false,
+        secretCount: orphans.filter(variable => variable.isSecret).length,
+        vars: orphans,
+      })
+    }
+    return { groups, total: memoryEnvVars.length, orphanCount: orphans.length, reconciled: 0 }
   },
 
   listOrphanEnvVars: async (): Promise<EnvVar[]> => {
