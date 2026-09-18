@@ -5,7 +5,7 @@ import { canCommit, commitCounterState, selectedPaths, toggleExcluded } from '..
 import { formatRelative } from '../../../lib/format'
 import type { GitHubRepo, GitStatusInfo, Project } from '../../../types'
 import { GitHubLogo } from '../../../components/GitHubLogo'
-import { PublishToGitHub, normalizarNombreRepo } from './PublishToGitHub'
+import { PublishToGitHub, normalizarNombreRepo, toGithubTopic } from './PublishToGitHub'
 
 export function GitTab({
   project,
@@ -32,6 +32,25 @@ export function GitTab({
   const [publishName, setPublishName] = useState(project.name)
   const [publishDesc, setPublishDesc] = useState('')
   const [publishPrivate, setPublishPrivate] = useState(false)
+
+  const initialTopics = useMemo(() => {
+    const list: string[] = []
+    const add = (raw: string) => {
+      const topic = toGithubTopic(raw)
+      if (topic && !list.includes(topic) && topic !== 'github') {
+        list.push(topic)
+      }
+    }
+    for (const f of project.frameworks ?? []) add(f)
+    for (const t of project.tags ?? []) add(t)
+    return list.slice(0, 20)
+  }, [project.frameworks, project.tags])
+
+  const [publishTopics, setPublishTopics] = useState<string[]>(initialTopics)
+
+  useEffect(() => {
+    setPublishTopics(initialTopics)
+  }, [initialTopics])
 
   const changes = gitStatus?.uncommittedChanges ?? []
   const changedPaths = useMemo(() => changes.map(file => file.path), [changes])
@@ -151,6 +170,7 @@ export function GitTab({
         repoName: normalizarNombreRepo(publishName) || normalizarNombreRepo(project.name),
         description: publishDesc.trim() || undefined,
         isPrivate: publishPrivate,
+        topics: publishTopics,
       })
       onNotify(res.message, 'success')
       await loadGitStatus()
@@ -196,6 +216,8 @@ export function GitTab({
             setPrivado={setPublishPrivate}
             usuario={gitHubRepo?.fullName.split('/')[0]}
             publicando={busy === 'publish'}
+            topics={publishTopics}
+            setTopics={setPublishTopics}
             onSubmit={handlePublish}
           />
         </div>
@@ -516,6 +538,8 @@ export function GitTab({
                 setPrivado={setPublishPrivate}
                 usuario={gitHubRepo?.fullName.split('/')[0]}
                 publicando={busy === 'publish'}
+                topics={publishTopics}
+                setTopics={setPublishTopics}
                 onSubmit={handlePublish}
               />
             </div>

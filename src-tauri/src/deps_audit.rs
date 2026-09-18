@@ -268,6 +268,9 @@ pub fn audit_dependencies(root: &Path, scan: &ProjectScan) -> Result<DependencyA
     for entry in WalkDir::new(root)
         .into_iter()
         .filter_entry(|e| {
+            if e.depth() == 0 {
+                return true;
+            }
             if e.file_type().is_dir() {
                 let name = e.file_name().to_string_lossy();
                 !is_ignored_dir(&name)

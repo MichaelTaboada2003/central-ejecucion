@@ -382,6 +382,8 @@ pub struct PublishToGitHubRequest {
     pub repo_name: String,
     pub description: Option<String>,
     pub is_private: bool,
+    #[serde(default)]
+    pub topics: Option<Vec<String>>,
 }
 
 /// Una variable de entorno guardada en la bóveda local.

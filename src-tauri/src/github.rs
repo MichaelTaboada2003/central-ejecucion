@@ -1080,11 +1080,66 @@ impl GitHubService {
         }
     }
 
+    /// Normaliza y valida una tecnología o etiqueta para cumplir las reglas de topics de GitHub:
+    /// minúsculas, caracteres [a-z0-9-], hasta 35 caracteres, comenzando por carácter alfanumérico.
+    pub fn sanitize_topic(raw: &str) -> Option<String> {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        let lower = trimmed.to_lowercase();
+        let normalized = match lower.as_str() {
+            "c++" => "cpp".to_string(),
+            "c#" => "csharp".to_string(),
+            ".net" | "dotnet" => "dotnet".to_string(),
+            "next.js" => "nextjs".to_string(),
+            "node.js" => "nodejs".to_string(),
+            "vue.js" => "vue".to_string(),
+            "three.js" => "threejs".to_string(),
+            "tailwind css" | "tailwindcss" => "tailwindcss".to_string(),
+            other => {
+                let mut s = String::with_capacity(other.len());
+                for c in other.chars() {
+                    if c.is_ascii_alphanumeric() {
+                        s.push(c.to_ascii_lowercase());
+                    } else if c == '-' || c == '_' || c == '.' || c == '/' || c.is_whitespace() {
+                        if !s.ends_with('-') {
+                            s.push('-');
+                        }
+                    }
+                }
+                s
+            }
+        };
+
+        let cleaned = normalized.trim_matches('-');
+        if cleaned.is_empty() {
+            return None;
+        }
+
+        if !cleaned.chars().next().map_or(false, |c| c.is_ascii_alphanumeric()) {
+            return None;
+        }
+
+        let mut truncated = cleaned;
+        if truncated.len() > 35 {
+            truncated = &truncated[..35];
+        }
+        let result = truncated.trim_end_matches('-').to_string();
+        if result.is_empty() {
+            None
+        } else {
+            Some(result)
+        }
+    }
+
     pub fn publish_project_to_github(
         project_path: &Path,
         project_name: &str,
         request: PublishToGitHubRequest,
         token: &str,
+        project: Option<&Project>,
     ) -> Result<GitActionResult, String> {
         let repo_name = if request.repo_name.trim().is_empty() {
             project_name.trim().to_string()
@@ -1095,7 +1150,7 @@ impl GitHubService {
         // 1. Create repo via GitHub API (POST https://api.github.com/user/repos)
         let body = serde_json::json!({
             "name": repo_name,
-            "description": request.description.unwrap_or_default(),
+            "description": request.description.clone().unwrap_or_default(),
             "private": request.is_private,
             "auto_init": false
         });
@@ -1115,6 +1170,53 @@ impl GitHubService {
             .and_then(|v| v.as_str())
             .ok_or_else(|| "GitHub no devolvió la URL de clonado.".to_string())?;
         let html_url = created_repo.get("html_url").and_then(|v| v.as_str()).unwrap_or("");
+
+        // 1.5. Incrustar topics/tags según tecnologías detectadas o especificadas
+        let mut final_topics: Vec<String> = Vec::new();
+        if let Some(user_topics) = &request.topics {
+            for t in user_topics {
+                if let Some(st) = Self::sanitize_topic(t) {
+                    if !final_topics.contains(&st) {
+                        final_topics.push(st);
+                    }
+                }
+            }
+        }
+        if final_topics.is_empty() {
+            if let Some(proj) = project {
+                for fw in &proj.frameworks {
+                    if let Some(st) = Self::sanitize_topic(fw) {
+                        if !final_topics.contains(&st) {
+                            final_topics.push(st);
+                        }
+                    }
+                }
+                for tag in &proj.tags {
+                    if tag != "github" {
+                        if let Some(st) = Self::sanitize_topic(tag) {
+                            if !final_topics.contains(&st) {
+                                final_topics.push(st);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        final_topics.truncate(20);
+
+        if let Some(full_name) = created_repo.get("full_name").and_then(|v| v.as_str()) {
+            if !final_topics.is_empty() {
+                let topics_url = format!("https://api.github.com/repos/{full_name}/topics");
+                let topics_body = serde_json::json!({
+                    "names": final_topics
+                });
+                let _ = ureq::put(&topics_url)
+                    .set("Authorization", &format!("Bearer {token}"))
+                    .set("Accept", "application/vnd.github+json")
+                    .set("User-Agent", "DevCommandCenter/1.0")
+                    .send_json(topics_body);
+            }
+        }
 
         // 2. If .git doesn't exist, git init
         if !project_path.join(".git").exists() {
@@ -1450,5 +1552,18 @@ mod tests {
         );
         assert!(GitHubService::inject_token_into_url("git@github.com:u/r.git", "abc").is_none());
         assert!(GitHubService::inject_token_into_url("https://github.com/u/r.git", "   ").is_none());
+    }
+
+    #[test]
+    fn sanitizes_topics_according_to_github_rules() {
+        assert_eq!(GitHubService::sanitize_topic("Next.js").as_deref(), Some("nextjs"));
+        assert_eq!(GitHubService::sanitize_topic("React").as_deref(), Some("react"));
+        assert_eq!(GitHubService::sanitize_topic("Tailwind CSS").as_deref(), Some("tailwindcss"));
+        assert_eq!(GitHubService::sanitize_topic("Node.js").as_deref(), Some("nodejs"));
+        assert_eq!(GitHubService::sanitize_topic("Docker Compose").as_deref(), Some("docker-compose"));
+        assert_eq!(GitHubService::sanitize_topic("AI / ML").as_deref(), Some("ai-ml"));
+        assert_eq!(GitHubService::sanitize_topic("C++").as_deref(), Some("cpp"));
+        assert_eq!(GitHubService::sanitize_topic("   ").as_deref(), None);
+        assert_eq!(GitHubService::sanitize_topic("---").as_deref(), None);
     }
 }

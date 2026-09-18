@@ -183,6 +183,28 @@ describe('GitTab: publicar en GitHub', () => {
     )
   })
 
+  it('el formulario precarga los frameworks como topics y los envía al publicar', async () => {
+    const usuario = userEvent.setup()
+    api.publishToGitHub.mockResolvedValue({ success: true, message: 'Publicado' })
+    montar(estadoGit({ remoteUrl: null, remoteName: null, remoteBranches: [] }))
+
+    expect(await screen.findByText('#react')).toBeTruthy()
+    expect(screen.getByText('#nextjs')).toBeTruthy()
+
+    const nombre = screen.getByLabelText(/nombre del repositorio/i)
+    await usuario.clear(nombre)
+    await usuario.type(nombre, 'app-con-tags')
+    await usuario.click(screen.getByRole('button', { name: /crear repositorio y subir/i }))
+
+    await waitFor(() => expect(api.publishToGitHub).toHaveBeenCalled())
+    expect(api.publishToGitHub).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repoName: 'app-con-tags',
+        topics: expect.arrayContaining(['react', 'nextjs']),
+      })
+    )
+  })
+
   it('enseña a dónde va a parar, con el nombre ya corregido', async () => {
     const usuario = userEvent.setup()
     montar(estadoGit({ remoteUrl: null, remoteName: null, remoteBranches: [] }))

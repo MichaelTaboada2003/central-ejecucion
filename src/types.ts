@@ -229,6 +229,7 @@ export interface PublishToGitHubRequest {
   repoName: string
   description?: string | null
   isPrivate: boolean
+  topics?: string[]
 }
 
 /**

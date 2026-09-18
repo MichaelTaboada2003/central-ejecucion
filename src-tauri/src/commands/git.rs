@@ -66,11 +66,25 @@ pub fn publish_project_to_github(request: PublishToGitHubRequest, state: tauri::
     let token = state.github_token(None)
         .ok_or_else(|| "Debes configurar un GitHub Token (PAT) en los Ajustes para publicar proyectos en tu cuenta.".to_string())?;
     let root = trusted_project_root(&project)?;
-    let result = github::GitHubService::publish_project_to_github(&root, &project.name, request, &token)?;
+    let result = github::GitHubService::publish_project_to_github(&root, &project.name, request.clone(), &token, Some(&project))?;
 
-    // Añadir tag "github" al proyecto si no lo tenía y persistir
+    // Añadir tag "github" y topics al proyecto local y persistir metadatos
+    let mut updated = false;
     if !project.tags.contains(&"github".to_string()) {
         project.tags.push("github".to_string());
+        updated = true;
+    }
+    if let Some(topics) = &request.topics {
+        for t in topics {
+            if let Some(st) = github::GitHubService::sanitize_topic(t) {
+                if !project.tags.contains(&st) {
+                    project.tags.push(st);
+                    updated = true;
+                }
+            }
+        }
+    }
+    if updated {
         let _ = state.storage.lock().map(|db| db.refresh_project_metadata(&project));
     }
 
