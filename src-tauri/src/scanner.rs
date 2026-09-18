@@ -411,6 +411,19 @@ pub fn scan_project(path: &Path) -> Result<ProjectScan, String> {
     if has_notebook(path) {
         frameworks.insert("Jupyter".to_string());
     }
+    let is_static_web = has_static_web_entrypoint(path);
+    if is_static_web {
+        frameworks.insert("HTML5".to_string());
+        if has_file_with_extension(path, "js") {
+            frameworks.insert("JavaScript".to_string());
+        }
+        if has_file_with_extension(path, "css") {
+            frameworks.insert("CSS3".to_string());
+        }
+        if types.is_empty() {
+            types.push("Web".to_string());
+        }
+    }
 
     scan.project_type = describe_project_type(&types, &frameworks);
     scan.frameworks = frameworks.into_iter().collect();
@@ -440,6 +453,8 @@ pub fn scan_project(path: &Path) -> Result<ProjectScan, String> {
             scan.port = Some(8000);
         } else if scan.frameworks.iter().any(|f| f == "Flask") {
             scan.port = Some(5000);
+        } else if scan.frameworks.iter().any(|f| f == "HTML5") {
+            scan.port = Some(5500);
         } else if scan.frameworks.iter().any(|f| f == "NestJS" || f == "Express" || f == "Fastify") {
             // Un backend Node declara su puerto en `.env`, no en el script. Sin
             // puerto la app no puede abrir su URL y, sobre todo, nunca lo ve
@@ -459,6 +474,19 @@ pub fn scan_project(path: &Path) -> Result<ProjectScan, String> {
         if scan.port.is_none() { scan.port = Some(8888); }
     }
 
+    // Una app web estática con index.html se sirve con el servidor HTTP de Python estándar
+    if scan.kind == ProjectKind::Service && scan.dev_command.is_none() && is_static_web {
+        let static_port = scan.port.unwrap_or(5500);
+        let cmd = format!("python3 -m http.server {static_port}");
+        scan.scripts.push(DetectedScript {
+            name: "dev".into(),
+            command: cmd.clone(),
+            source: "Static Web".into(),
+        });
+        scan.dev_command = Some(cmd);
+        scan.port = Some(static_port);
+    }
+
     // Un script de una pasada no tiene URL local aunque el detector le haya
     // adivinado un puerto por el camino.
     if scan.kind == ProjectKind::Script || scan.kind == ProjectKind::Inert {
@@ -473,7 +501,7 @@ pub fn scan_project(path: &Path) -> Result<ProjectScan, String> {
 const SERVER_FRAMEWORKS: &[&str] = &[
     "Next.js", "Nuxt", "Remix", "Astro", "Vite", "Svelte", "SvelteKit", "Angular", "Expo",
     "React Native", "Django", "FastAPI", "Flask", "Streamlit", "NestJS", "Express", "Fastify",
-    "Laravel", "Tauri",
+    "Laravel", "Tauri", "HTML5",
 ];
 
 /// Deduce como debe tratarse el proyecto. Es una derivacion de lo ya detectado,
@@ -550,6 +578,12 @@ pub fn adapt_command_for_available_port(mut spec: CommandSpec, port: u16) -> Com
     } else if spec.program == "flask" {
         spec.args.push("--port".into());
         spec.args.push(port_str.clone());
+    } else if spec.program == "python3" && spec.args.iter().any(|arg| arg == "http.server") {
+        if let Some(last) = spec.args.last_mut() {
+            if last.parse::<u16>().is_ok() {
+                *last = port_str.clone();
+            }
+        }
     }
 
     spec.display = std::iter::once(spec.program.clone()).chain(spec.args.iter().cloned()).collect::<Vec<_>>().join(" ");
@@ -679,6 +713,8 @@ fn describe_project_type(types: &[String], frameworks: &BTreeSet<String>) -> Str
         Some("Vite App")
     } else if has("Jupyter") {
         Some("Jupyter Notebooks")
+    } else if has("HTML5") {
+        Some("Sitio Web Estático")
     } else {
         None
     };
@@ -725,6 +761,39 @@ fn has_notebook(path: &Path) -> bool {
     entries.flatten().any(|entry| {
         entry.file_type().is_ok_and(|kind| kind.is_file())
             && entry.path().extension().is_some_and(|extension| extension == "ipynb")
+    })
+}
+
+/// Comprueba si existe un punto de entrada web estático (`index.html` o `index.htm`) en la raíz del proyecto.
+fn has_static_web_entrypoint(path: &Path) -> bool {
+    path.join("index.html").is_file() || path.join("index.htm").is_file()
+}
+
+/// Comprueba si el proyecto contiene archivos con cierta extensión (.js, .css, etc.) en la raíz o en subdirectorios inmediatos.
+fn has_file_with_extension(path: &Path, target_ext: &str) -> bool {
+    let Ok(entries) = fs::read_dir(path) else { return false };
+    entries.flatten().any(|entry| {
+        let is_target_file = entry.file_type().is_ok_and(|kind| kind.is_file())
+            && entry
+                .path()
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case(target_ext));
+        if is_target_file {
+            return true;
+        }
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            let dir_name = entry.file_name();
+            let dir_str = dir_name.to_string_lossy();
+            if !dir_str.starts_with('.') && dir_str != "node_modules" && dir_str != "dist" && dir_str != "build" && dir_str != "target" {
+                if let Ok(sub_entries) = fs::read_dir(entry.path()) {
+                    return sub_entries.flatten().any(|sub| {
+                        sub.file_type().is_ok_and(|kind| kind.is_file())
+                            && sub.path().extension().is_some_and(|ext| ext.eq_ignore_ascii_case(target_ext))
+                    });
+                }
+            }
+        }
+        false
     })
 }
 
@@ -951,6 +1020,9 @@ pub fn command_for_action_on_port(
         } else {
             spec(parts[0], &parts[1..])
         }
+    } else if script.source == "Static Web" || script.command.starts_with("python3 -m http.server") {
+        let port_str = desired_port.or(scan.port).unwrap_or(5500).to_string();
+        spec("python3", &["-m", "http.server", &port_str])
     } else if scan.package_manager.as_deref() == Some("pnpm")
         || scan.package_manager.as_deref() == Some("npm")
         || scan.package_manager.as_deref() == Some("yarn")
@@ -1746,4 +1818,33 @@ mod tests {
         assert!(scan.dependencies.iter().any(|d| d.name == "nuxt" && d.source == "apps/web/package.json"));
         assert!(scan.dependencies.iter().any(|d| d.name == "fastapi" && d.source == "apps/server/pyproject.toml"));
     }
+
+    #[test]
+    fn detects_static_web_app_and_provides_http_server() {
+        let dir = tempdir().expect("tempdir");
+        let root = dir.path();
+
+        fs::write(root.join("index.html"), "<!DOCTYPE html><html><body><h1>Hola</h1></body></html>").expect("index");
+        fs::write(root.join("app.js"), "console.log('listo');").expect("app");
+        fs::write(root.join("style.css"), "body { margin: 0; }").expect("css");
+
+        let scan = scan_project(root).expect("scan");
+        assert_eq!(scan.project_type, "Sitio Web Estático");
+        assert_eq!(scan.kind, ProjectKind::Service);
+        assert!(scan.frameworks.contains(&"HTML5".to_string()));
+        assert!(scan.frameworks.contains(&"JavaScript".to_string()));
+        assert!(scan.frameworks.contains(&"CSS3".to_string()));
+        assert_eq!(scan.dev_command.as_deref(), Some("python3 -m http.server 5500"));
+        assert_eq!(scan.port, Some(5500));
+        assert_eq!(scan.local_url.as_deref(), Some("http://localhost:5500"));
+
+        let command = command_for_action(root, &scan, "dev", None).expect("command");
+        assert_eq!(command.program, "python3");
+        assert_eq!(command.args, vec!["-m", "http.server", "5500"]);
+
+        let shifted = command_for_action_on_port(root, &scan, "dev", None, Some(5501)).expect("shifted");
+        assert_eq!(shifted.args, vec!["-m", "http.server", "5501"]);
+        assert_eq!(shifted.display, "python3 -m http.server 5501");
+    }
 }
+
