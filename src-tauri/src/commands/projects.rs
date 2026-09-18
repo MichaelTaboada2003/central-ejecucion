@@ -5,8 +5,65 @@ use crate::probe::{is_project_running, update_projects_status_batch};
 use crate::scanner::{canonical_project_path, scan_project};
 use crate::{absolute_input_path, disk, storage, trusted_project_root, AppState, DeleteProjectRequest};
 use chrono::Utc;
-use std::path::Path;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
+
+fn try_recover_renamed_project_root(project: &Project, state: &tauri::State<'_, AppState>) -> Option<PathBuf> {
+    let old_path = Path::new(&project.canonical_path);
+    let parent = old_path.parent()?;
+    if !parent.is_dir() {
+        return None;
+    }
+
+    let registered_paths: HashSet<String> = state
+        .with_storage(|db| db.list_projects())
+        .ok()?
+        .into_iter()
+        .map(|p| p.canonical_path)
+        .collect();
+
+    // 1. Si en la misma carpeta padre existe una con el nombre exacto del proyecto
+    let candidate = parent.join(&project.name);
+    if candidate.is_dir() {
+        if let Ok(canonical) = std::fs::canonicalize(&candidate) {
+            let canon_str = canonical.to_string_lossy().to_string();
+            if !registered_paths.contains(&canon_str) {
+                return Some(canonical);
+            }
+        }
+    }
+
+    // 2. Si es un repositorio git, buscar en carpetas hermanas la que coincida por remoto
+    let old_folder_name = old_path.file_name().and_then(|n| n.to_str()).map(str::to_lowercase);
+    let proj_name_lower = project.name.to_lowercase();
+    let entries = std::fs::read_dir(parent).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() || path == old_path {
+            continue;
+        }
+        if let Ok(canonical) = std::fs::canonicalize(&path) {
+            let canon_str = canonical.to_string_lossy().to_string();
+            if registered_paths.contains(&canon_str) {
+                continue;
+            }
+            if let Some(candidate_remote) = crate::github::GitHubService::get_git_remote_url(&canonical) {
+                let cr_lower = candidate_remote.to_lowercase();
+                let matches_name = cr_lower.ends_with(&format!("/{}.git", proj_name_lower))
+                    || cr_lower.ends_with(&format!("/{}", proj_name_lower));
+                let matches_old_folder = old_folder_name.as_ref().map(|old| {
+                    cr_lower.ends_with(&format!("/{}.git", old)) || cr_lower.ends_with(&format!("/{}", old))
+                }).unwrap_or(false);
+                if matches_name || matches_old_folder {
+                    return Some(canonical);
+                }
+            }
+        }
+    }
+
+    None
+}
 
 #[tauri::command(async)]
 pub fn list_projects(state: tauri::State<'_, AppState>) -> Result<Vec<Project>, String> {
@@ -70,10 +127,22 @@ pub fn get_project_detail(project_id: String, state: tauri::State<'_, AppState>)
     let root = match trusted_project_root(&project) {
         Ok(r) => r,
         Err(error) => {
-            let _ = state.storage.lock().map(|db| db.mark_project_error(&project_id, &error));
-            return Err(error);
+            if let Some(recovered) = try_recover_renamed_project_root(&project, &state) {
+                recovered
+            } else {
+                let _ = state.storage.lock().map(|db| db.mark_project_error(&project_id, &error));
+                return Err(error);
+            }
         }
     };
+    if let Some(folder_name) = root.file_name().and_then(|n| n.to_str()) {
+        if !folder_name.trim().is_empty() && (project.name != folder_name || project.canonical_path != root.to_string_lossy()) {
+            project.name = folder_name.trim().to_string();
+            project.path = root.to_string_lossy().to_string();
+            project.canonical_path = root.to_string_lossy().to_string();
+            let _ = state.with_storage(|db| db.refresh_project_metadata(&project));
+        }
+    }
     let scan = scan_project(&root)?;
     let recent_commands = state.with_storage(|db| db.recent_commands(&project_id))?;
     Ok(ProjectDetail { process: process_info, project, scan, recent_commands })
@@ -89,12 +158,23 @@ pub fn refresh_project(project_id: String, state: tauri::State<'_, AppState>) ->
     let root = match trusted_project_root(&project) {
         Ok(r) => r,
         Err(error) => {
-            let _ = state.storage.lock().map(|db| db.mark_project_error(&project_id, &error));
-            return Err(error);
+            if let Some(recovered) = try_recover_renamed_project_root(&project, &state) {
+                recovered
+            } else {
+                let _ = state.storage.lock().map(|db| db.mark_project_error(&project_id, &error));
+                return Err(error);
+            }
         }
     };
     let scan = scan_project(&root)?;
     let report = disk::disk_report(&project_id, &root)?;
+    if let Some(folder_name) = root.file_name().and_then(|n| n.to_str()) {
+        if !folder_name.trim().is_empty() {
+            project.name = folder_name.trim().to_string();
+        }
+    }
+    project.path = root.to_string_lossy().to_string();
+    project.canonical_path = root.to_string_lossy().to_string();
     project.project_type = scan.project_type;
     project.kind = scan.kind;
     project.frameworks = scan.frameworks;
@@ -120,8 +200,24 @@ pub fn refresh_project(project_id: String, state: tauri::State<'_, AppState>) ->
 pub fn refresh_all_projects(state: tauri::State<'_, AppState>) -> Result<Vec<Project>, String> {
     let projects = state.with_storage(|db| db.list_projects())?;
     for mut project in projects {
-        let Ok(root) = trusted_project_root(&project) else { continue };
+        let root = match trusted_project_root(&project) {
+            Ok(r) => r,
+            Err(_) => {
+                if let Some(recovered) = try_recover_renamed_project_root(&project, &state) {
+                    recovered
+                } else {
+                    continue;
+                }
+            }
+        };
         let Ok(scan) = scan_project(&root) else { continue };
+        if let Some(folder_name) = root.file_name().and_then(|n| n.to_str()) {
+            if !folder_name.trim().is_empty() {
+                project.name = folder_name.trim().to_string();
+            }
+        }
+        project.path = root.to_string_lossy().to_string();
+        project.canonical_path = root.to_string_lossy().to_string();
         project.project_type = scan.project_type;
         project.kind = scan.kind;
         project.frameworks = scan.frameworks;

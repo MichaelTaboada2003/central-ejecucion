@@ -528,6 +528,13 @@ impl DevCommandCenterMcp {
         self.with_state(|state| {
             let (mut project, root, scan) = Self::project_and_scan(state, &request.project_id)?;
             let report = disk::disk_report(&project.id, &root)?;
+            if let Some(folder_name) = root.file_name().and_then(|n| n.to_str()) {
+                if !folder_name.trim().is_empty() {
+                    project.name = folder_name.trim().to_string();
+                }
+            }
+            project.path = root.to_string_lossy().to_string();
+            project.canonical_path = root.to_string_lossy().to_string();
             project.project_type = scan.project_type;
             project.frameworks = scan.frameworks;
             project.package_manager = scan.package_manager;
@@ -960,7 +967,12 @@ fn absolute_input_path(raw: &str) -> Result<PathBuf, String> {
 fn trusted_project_root(project: &Project) -> Result<PathBuf, String> {
     let root = Path::new(&project.canonical_path);
     let canonical = std::fs::canonicalize(root).map_err(|_| format!("La carpeta registrada ya no está disponible: {}", project.path))?;
-    if canonical != root { return Err("Operación bloqueada: la ruta canónica del proyecto cambió. Vuelve a registrar la carpeta para continuar.".into()); }
+    if canonical != root {
+        if canonical.to_string_lossy().eq_ignore_ascii_case(&root.to_string_lossy()) {
+            return Ok(canonical);
+        }
+        return Err("Operación bloqueada: la ruta canónica del proyecto cambió. Vuelve a registrar la carpeta para continuar.".into());
+    }
     if !canonical.is_dir() { return Err("Operación bloqueada: la ruta registrada no es una carpeta.".into()); }
     Ok(canonical)
 }

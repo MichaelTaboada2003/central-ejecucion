@@ -205,8 +205,23 @@ impl Storage {
 
     pub fn refresh_project_metadata(&self, project: &Project) -> Result<(), String> {
         self.connection.execute(
-            "UPDATE projects SET project_type=?2, frameworks_json=?3, package_manager=?4, dev_command=?5, build_command=?6, test_command=?7, local_url=?8, port=?9, disk_size_bytes=?10, kind=?11 WHERE id=?1",
-            params![project.id, project.project_type, json(&project.frameworks), project.package_manager, project.dev_command, project.build_command, project.test_command, project.local_url, project.port, project.disk_size_bytes, project.kind.as_str()],
+            "UPDATE projects SET name=?2, path=?3, canonical_path=?4, project_type=?5, frameworks_json=?6, package_manager=?7, dev_command=?8, build_command=?9, test_command=?10, local_url=?11, port=?12, disk_size_bytes=?13, kind=?14 WHERE id=?1",
+            params![
+                project.id,
+                project.name,
+                project.path,
+                project.canonical_path,
+                project.project_type,
+                json(&project.frameworks),
+                project.package_manager,
+                project.dev_command,
+                project.build_command,
+                project.test_command,
+                project.local_url,
+                project.port,
+                project.disk_size_bytes,
+                project.kind.as_str(),
+            ],
         ).map_err(|error| format!("No se pudo actualizar los metadatos del proyecto: {error}"))?;
         Ok(())
     }
@@ -761,6 +776,25 @@ mod tests {
         rescanned.kind = ProjectKind::Service;
         storage.refresh_project_metadata(&rescanned).expect("refresh");
         assert_eq!(storage.get_project("p1").expect("get project").kind, ProjectKind::Service);
+    }
+
+    #[test]
+    fn the_name_and_path_are_updated_by_a_rescan() {
+        let directory = tempdir().expect("tempdir");
+        let storage = Storage::open(&directory.path().join("registry.sqlite3")).expect("open storage");
+        let project = fixture("p1", directory.path().to_str().expect("path"));
+        storage.insert_project(&project).expect("insert project");
+
+        let mut rescanned = storage.get_project("p1").expect("get project");
+        rescanned.name = "nuevo-nombre".to_string();
+        rescanned.path = "/ruta/nueva".to_string();
+        rescanned.canonical_path = "/ruta/nueva".to_string();
+        storage.refresh_project_metadata(&rescanned).expect("refresh");
+
+        let updated = storage.get_project("p1").expect("get project");
+        assert_eq!(updated.name, "nuevo-nombre");
+        assert_eq!(updated.path, "/ruta/nueva");
+        assert_eq!(updated.canonical_path, "/ruta/nueva");
     }
 
     /// WAL es lo que permite que el servidor MCP y la app usen el mismo fichero

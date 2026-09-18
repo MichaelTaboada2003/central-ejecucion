@@ -103,6 +103,9 @@ pub(crate) fn trusted_project_root(project: &Project) -> Result<PathBuf, String>
     let root = Path::new(&project.canonical_path);
     let canonical = std::fs::canonicalize(root).map_err(|_| format!("La carpeta registrada ya no está disponible: {}", project.path))?;
     if canonical != root {
+        if canonical.to_string_lossy().eq_ignore_ascii_case(&root.to_string_lossy()) {
+            return Ok(canonical);
+        }
         return Err("Operación bloqueada: la ruta canónica del proyecto cambió. Vuelve a registrar la carpeta para continuar.".into());
     }
     if !canonical.is_dir() { return Err("Operación bloqueada: la ruta registrada no es una carpeta.".into()); }
@@ -193,4 +196,52 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Dev Command Center");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn trusted_project_root_allows_case_differences_on_case_preserving_filesystem() {
+        let dir = tempdir().expect("tempdir");
+        let canonical_dir = dir.path().canonicalize().expect("canonicalize");
+        let canonical_str = canonical_dir.to_string_lossy().to_string();
+        let mut project = domain::Project {
+            id: "p1".into(),
+            name: "Test".into(),
+            path: canonical_str.clone(),
+            canonical_path: canonical_str.clone(),
+            project_type: "Static Web".into(),
+            kind: domain::ProjectKind::Service,
+            frameworks: vec![],
+            package_manager: None,
+            dev_command: None,
+            build_command: None,
+            test_command: None,
+            local_url: None,
+            port: None,
+            status: domain::ProjectStatus::Stopped,
+            last_used_at: None,
+            disk_size_bytes: 0,
+            tags: vec![],
+            created_at: "".into(),
+            last_error: None,
+            is_pinned: false,
+            is_archived: false,
+        };
+
+        // Exact match
+        let root = trusted_project_root(&project).expect("trusted root");
+        assert_eq!(root, canonical_dir);
+
+        // Case difference (if filesystem is case-insensitive, e.g. macOS APFS)
+        let upper_canonical = canonical_str.to_uppercase();
+        if std::fs::canonicalize(&upper_canonical).is_ok() {
+            project.canonical_path = upper_canonical;
+            let root = trusted_project_root(&project).expect("trusted root case match");
+            assert_eq!(root, canonical_dir);
+        }
+    }
 }
