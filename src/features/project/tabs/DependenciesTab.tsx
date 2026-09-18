@@ -4,7 +4,6 @@ import {
   Check,
   CheckCircle2,
   Copy,
-  ExternalLink,
   LoaderCircle,
   PackageOpen,
   Search,
@@ -34,17 +33,6 @@ function getRemovalCommandPreview(pm: string | null | undefined, depName: string
   if (manager.includes('poetry')) return `poetry remove ${depName}`
   if (manager.includes('pipenv')) return `pipenv uninstall ${depName}`
   return `npm uninstall ${depName}`
-}
-
-function getPackageRegistryUrl(pm: string | null | undefined, name: string): string {
-  const manager = (pm || '').toLowerCase()
-  if (manager.includes('cargo')) {
-    return `https://crates.io/crates/${name}`
-  }
-  if (manager.includes('pip') || manager.includes('poetry')) {
-    return `https://pypi.org/project/${name}/`
-  }
-  return `https://www.npmjs.com/package/${name}`
 }
 
 export function DependenciesTab({
@@ -443,11 +431,6 @@ export function DependenciesTab({
                   </div>
 
                   <div className="dep-meta-tags">
-                    {isUnused && (
-                      <span className="dep-kind-tag unused" title="Sin referencias detectadas en el código fuente">
-                        Sin uso
-                      </span>
-                    )}
                     {dep.version && (
                       <span className="dep-version-tag" title={`Versión: ${dep.version}`}>
                         {dep.version}
@@ -560,18 +543,6 @@ export function DependenciesTab({
                 <span>Si el proyecto usa este paquete, eliminarlo provocará errores al compilar o ejecutar.</span>
               </div>
             )}
-
-            <div className="dep-modal-registry-row">
-              <a
-                href={getPackageRegistryUrl(scan.packageManager, selectedDep.name)}
-                target="_blank"
-                rel="noreferrer"
-                className="dep-registry-link"
-              >
-                <ExternalLink size={13} />
-                <span>Ver paquete en el registro oficial</span>
-              </a>
-            </div>
 
             <div className="modal-actions">
               <button

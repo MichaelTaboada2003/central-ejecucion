@@ -2530,33 +2530,6 @@ code, kbd, pre, .mono {
   color: var(--text-primary);
 }
 
-.dep-modal-registry-row {
-  display: flex;
-  justify-content: flex-start;
-  margin-top: 2px;
-}
-
-.dep-registry-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--accent-primary);
-  text-decoration: none;
-  padding: 6px 12px;
-  border-radius: var(--radius-xs);
-  background: var(--accent-primary-subtle);
-  border: 1px solid var(--accent-primary-border);
-  transition: all var(--transition-fast);
-}
-
-.dep-registry-link:hover {
-  background: rgba(16, 185, 129, 0.2);
-  border-color: var(--accent-primary);
-  transform: translateY(-1px);
-}
-
 
 
 .empty-deps-state {

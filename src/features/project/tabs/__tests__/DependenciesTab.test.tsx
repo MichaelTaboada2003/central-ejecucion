@@ -181,8 +181,9 @@ describe('DependenciesTab: detección y eliminación de dependencias huérfanas'
     const chipUnused = screen.getByRole('button', { name: /^sin uso \(1\)$/i })
     expect(chipUnused).toBeTruthy()
 
-    // Tag on lodash
-    expect(screen.getByText('Sin uso')).toBeTruthy()
+    // La tarjeta de lodash tiene el estilo distintivo dep-card-unused
+    const cardLodash = screen.getByTitle(/clic para ver detalles y gestionar lodash/i)
+    expect(cardLodash.classList.contains('dep-card-unused')).toBe(true)
 
     // Filter by unused
     await act(async () => {
@@ -293,7 +294,6 @@ describe('DependenciesTab: detección y eliminación de dependencias huérfanas'
     // Se abre el modal con comando y detalles
     expect(screen.getByText(/¿Desinstalar «clsx»\?/i)).toBeTruthy()
     expect(screen.getByText('pnpm remove clsx')).toBeTruthy()
-    expect(screen.getByText(/ver paquete en el registro oficial/i)).toBeTruthy()
 
     // Cerrar el modal
     const closeBtn = screen.getByRole('button', { name: /cancelar/i })
