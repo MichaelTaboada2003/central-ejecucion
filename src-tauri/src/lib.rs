@@ -193,6 +193,9 @@ pub fn run() {
             commands::git::project_git_commit,
             commands::git::project_git_commit_and_push,
             commands::git::publish_project_to_github,
+            // clipboard
+            commands::clipboard::copy_to_clipboard,
+            commands::clipboard::read_from_clipboard,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Dev Command Center");

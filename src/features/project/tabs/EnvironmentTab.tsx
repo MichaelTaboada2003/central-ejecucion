@@ -24,7 +24,7 @@ import { countParsableVars, groupByScope, looksLikeSecret, maskValue, syncState 
 import { formatBytes } from '../../../lib/format'
 import type { EnvFileInfo, EnvVar, ProjectEnvVars } from '../../../types'
 import { LoadingInline } from '../../../components/Primitives'
-import { copyText } from '../../../lib/clipboard'
+import { copyText, readClipboardText } from '../../../lib/clipboard'
 
 /** Formulario de alta o edición. `id` ausente significa que es nueva. */
 interface Draft {
@@ -115,7 +115,14 @@ export function EnvironmentTab({
             </p>
           </div>
           <div className="env-heading-actions">
-            <button className="secondary" onClick={() => setPaste({ scope: '.env', content: '' })} disabled={!!busy}>
+            <button
+              className="secondary"
+              onClick={async () => {
+                const text = await readClipboardText()
+                setPaste({ scope: '.env', content: text || '' })
+              }}
+              disabled={!!busy}
+            >
               <ClipboardPaste size={15} /> Pegar .env
             </button>
             <button className="secondary" onClick={() => onCopy()} disabled={!!busy || !vars.length}>
@@ -298,17 +305,30 @@ export function EnvironmentTab({
             />
             <div className="env-paste-footer">
               <span>{countParsableVars(paste.content)} variables detectadas</span>
-              <button
-                className="primary"
-                disabled={!!busy || countParsableVars(paste.content) === 0}
-                onClick={async () => {
-                  const imported = await onImport(paste.scope.trim() || '.env', paste.content)
-                  if (imported) setPaste(null)
-                }}
-              >
-                {busy?.startsWith('import:') ? <LoaderCircle size={15} className="spin" /> : <Download size={15} />}{' '}
-                Importar a la bóveda
-              </button>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={async () => {
+                    const text = await readClipboardText()
+                    if (text) setPaste(current => current ? { ...current, content: text } : null)
+                  }}
+                  title="Pegar el texto actualmente en el portapapeles"
+                >
+                  <ClipboardPaste size={14} /> Pegar portapapeles
+                </button>
+                <button
+                  className="primary"
+                  disabled={!!busy || countParsableVars(paste.content) === 0}
+                  onClick={async () => {
+                    const imported = await onImport(paste.scope.trim() || '.env', paste.content)
+                    if (imported) setPaste(null)
+                  }}
+                >
+                  {busy?.startsWith('import:') ? <LoaderCircle size={15} className="spin" /> : <Download size={15} />}{' '}
+                  Importar a la bóveda
+                </button>
+              </div>
             </div>
           </div>
         </section>
@@ -452,10 +472,16 @@ function VarRow({
   const [copied, setCopied] = useState(false)
   const hidden = variable.isSecret && !revealed
 
-  const copy = () => {
-    void copyText(variable.value)
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 1500)
+  const copy = async (event: React.MouseEvent) => {
+    event.stopPropagation()
+    try {
+      const textToCopy = event.altKey ? `${variable.key}=${variable.value}` : variable.value
+      await copyText(textToCopy)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1500)
+    } catch {
+      // Si la copia falla, no mostramos el estado de copiado
+    }
   }
 
   return (
@@ -476,7 +502,7 @@ function VarRow({
             {revealed ? <EyeOff size={14} /> : <Eye size={14} />}
           </button>
         )}
-        <button className="icon-button" onClick={copy} title="Copiar valor">
+        <button className="icon-button" onClick={copy} title="Copiar valor (Alt+clic para CLAVE=valor)">
           {copied ? <Check size={14} color="var(--accent-primary)" /> : <Copy size={14} />}
         </button>
         <button

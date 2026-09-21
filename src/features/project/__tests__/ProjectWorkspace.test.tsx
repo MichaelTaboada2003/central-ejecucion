@@ -191,7 +191,6 @@ describe('ProjectWorkspace: pestañas y metadatos integrados en Resumen', () => 
   it('la pestaña Resumen incluye la sección de detalles del proyecto y rutas', () => {
     montar({
       project: proyecto({ path: '/Users/test/mi-proyecto', canonicalPath: '/Users/test/mi-proyecto' }),
-      tab: 'summary',
     })
     expect(screen.getByText('Detalles del Proyecto')).toBeTruthy()
     expect(screen.getByText('Inmutabilidad de alcance')).toBeTruthy()
